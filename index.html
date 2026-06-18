@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Porra Mundial 2026</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+<style>
+  body{margin:0;background:#f9fafb;}
+  ::-webkit-scrollbar{display:none;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react" data-type="module">
+const {useState, useEffect, useCallback, useRef} = React;
+
+// =====================================================================
+// CAPA DE ALMACENAMIENTO — sustituye al window.storage de Claude.ai.
+// - Datos personales (shared:false) -> localStorage del propio navegador.
+// - Datos compartidos (shared:true) -> un bin de JSONBin (predicciones +
+//   marcador de versión de la semilla). Los marcadores en vivo se leen
+//   directamente del bin público de resultados (ver fetchScores más abajo),
+//   y aquí solo se cachean localmente para una carga inicial instantánea.
+//
+// ⚠️ PASO PENDIENTE (ver SETUP_WEBSITE.md): sustituye estos dos valores
+// por el Bin ID y la X-Master-Key de tu segundo bin de JSONBin (el de
+// predicciones). Hasta entonces, guardar/cargar pronósticos mostrará un
+// aviso claro en pantalla.
+const DATA_BIN_ID = "6a33f7b4f5f4af5e2908e777";
+const DATA_BIN_KEY = "$2a$10$akz/QRgSqYpcJrT8BC8Yje0kbTXbgHSWm7X.ON6b.jsdCBEDl5D6q";
+const DATA_READ_URL = `https://api.jsonbin.io/v3/b/${DATA_BIN_ID}/latest`;
+const DATA_WRITE_URL = `https://api.jsonbin.io/v3/b/${DATA_BIN_ID}`;
+
+const Storage = {
+  async get(key, shared){
+    if(!shared){
+      try{
+        const v = localStorage.getItem(key);
+        return v!=null ? {key, value:v, shared:false} : null;
+      }catch(e){ return null; }
+    }
+    if(DATA_BIN_ID==="YOUR_PREDICTIONS_BIN_ID") throw new Error("Falta configurar el bin de predicciones (ver SETUP_WEBSITE.md)");
+    const res = await fetch(DATA_READ_URL);
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    const data = await res.json();
+    const record = data.record||{};
+    if(!(key in record)) return null;
+    return {key, value: JSON.stringify(record[key]), shared:true};
+  },
+  async set(key, value, shared){
+    if(!shared){
+      try{ localStorage.setItem(key, value); }catch(e){}
+      return {key, value, shared:false};
+    }
+    if(DATA_BIN_ID==="YOUR_PREDICTIONS_BIN_ID") throw new Error("Falta configurar el bin de predicciones (ver SETUP_WEBSITE.md)");
+    const res = await fetch(DATA_READ_URL);
+    let record = {};
+    if(res.ok){ const data = await res.json(); record = data.record||{}; }
+    record[key] = JSON.parse(value);
+    const putRes = await fetch(DATA_WRITE_URL, {
+      method:"PUT",
+      headers:{"Content-Type":"application/json","X-Master-Key":DATA_BIN_KEY},
+      body: JSON.stringify(record)
+    });
+    if(!putRes.ok) throw new Error("HTTP "+putRes.status);
+    return {key, value, shared:true};
+  },
+  async delete(key, shared){
+    if(!shared){
+      try{ localStorage.removeItem(key); }catch(e){}
+      return {key, deleted:true, shared:false};
+    }
+    return null;
+  }
+};
+
+const PARTICIPANTS = [
+  "Alberto","Alejandro","Camila","Carlos Mauricio Muñoz","Chano",
+  "Daniela Rizo","David","Ernesto Trujillo Roble","Fabiola Ramirez",
+  "Fernando Rojas-Vizcaya","Gabriel Rojas","José María Solís",
+  "Manuela Plazas","María Luisa","Martin Torres",
+  "Monika De Rojas Jaramillo","Nancho","Nik","Rafael Uribe",
+  "Ricardo Plazas","Santy","Sergio Fuentes","Sergio Rojas"
+].sort((a,b)=>a.localeCompare(b,"es"));
+
+const excelToDate = s => new Date((s-25569)*86400000);
+const fmtDate = s => excelToDate(s).toLocaleDateString("es-ES",{weekday:"short",day:"numeric",month:"short"});
+const fmtDateISO = iso => new Date(iso+"T12:00:00").toLocaleDateString("es-ES",{weekday:"short",day:"numeric",month:"short"});
+
+// Convierte fecha+hora de España (CEST, UTC+2) a un instante real (timestamp UTC),
+// para poder comparar con la hora real del dispositivo sin importar su zona horaria.
+function kickoffFromExcel(ds,time){
+  const d=excelToDate(ds);
+  const y=d.getUTCFullYear(), m=String(d.getUTCMonth()+1).padStart(2,"0"), day=String(d.getUTCDate()).padStart(2,"0");
+  return new Date(`${y}-${m}-${day}T${time}:00+02:00`).getTime();
+}
+function kickoffFromISO(iso,time){
+  return new Date(`${iso}T${time}:00+02:00`).getTime();
+}
+
+function getRound(id){
+  if(id<=72) return "Fase de Grupos";
+  if(id<=88) return "Ronda de 32";
+  if(id<=96) return "Octavos de Final";
+  if(id<=100) return "Cuartos de Final";
+  if(id<=102) return "Semifinales";
+  if(id===103) return "3er Puesto";
+  if(id===104) return "Final";
+  return "Eliminatoria";
+}
+
+const GROUP_MATCHES = [
+  [1,46184,"21:00","México","MEX","Sudáfrica","RSA",2,0,"Finalizado"],
+  [2,46185,"04:00","Corea del Sur","KOR","Chequia","CZE",2,1,"Finalizado"],
+  [3,46185,"21:00","Canadá","CAN","Bosnia y Herzegovina","BIH",1,1,"Finalizado"],
+  [4,46186,"03:00","Estados Unidos","USA","Paraguay","PAR",4,1,"Finalizado"],
+  [5,46186,"21:00","Catar","QAT","Suiza","SUI",1,1,"Finalizado"],
+  [6,46187,"00:00","Brasil","BRA","Marruecos","MAR",1,1,"Finalizado"],
+  [7,46187,"03:00","Haití","HAI","Escocia","SCO",0,1,"Finalizado"],
+  [8,46187,"06:00","Australia","AUS","Turquía","TUR",2,0,"Finalizado"],
+  [9,46187,"19:00","Alemania","GER","Curazao","CUW",7,1,"Finalizado"],
+  [10,46187,"22:00","Países Bajos","NED","Japón","JPN",2,2,"Finalizado"],
+  [11,46188,"01:00","Costa de Marfil","CIV","Ecuador","ECU",1,0,"Finalizado"],
+  [12,46188,"04:00","Suecia","SWE","Túnez","TUN",5,1,"Finalizado"],
+  [13,46188,"18:00","España","ESP","Cabo Verde","CPV",0,0,"Finalizado"],
+  [14,46188,"21:00","Bélgica","BEL","Egipto","EGY",1,1,"Finalizado"],
+  [15,46189,"00:00","Arabia Saudí","KSA","Uruguay","URU",1,1,"Finalizado"],
+  [16,46189,"03:00","Irán","IRN","Nueva Zelanda","NZL",2,2,"Finalizado"],
+  [17,46189,"21:00","Francia","FRA","Senegal","SEN",3,1,"Finalizado"],
+  [18,46190,"00:00","Irak","IRQ","Noruega","NOR",1,4,"Finalizado"],
+  [19,46190,"03:00","Argentina","ARG","Argelia","ALG",3,0,"Finalizado"],
+  [20,46190,"06:00","Austria","AUT","Jordania","JOR",3,1,"Finalizado"],
+  [21,46190,"19:00","Portugal","POR","RD Congo","COD",1,1,"Finalizado"],
+  [22,46190,"22:00","Inglaterra","ENG","Croacia","CRO",null,null,"Programado"],
+  [23,46191,"01:00","Ghana","GHA","Panamá","PAN",null,null,"Programado"],
+  [24,46191,"04:00","Uzbekistán","UZB","Colombia","COL",null,null,"Programado"],
+  [25,46191,"18:00","Chequia","CZE","Sudáfrica","RSA",null,null,"Programado"],
+  [26,46191,"21:00","Suiza","SUI","Bosnia y Herzegovina","BIH",null,null,"Programado"],
+  [27,46192,"00:00","Canadá","CAN","Catar","QAT",null,null,"Programado"],
+  [28,46192,"03:00","México","MEX","Corea del Sur","KOR",null,null,"Programado"],
+  [29,46192,"21:00","Estados Unidos","USA","Australia","AUS",null,null,"Programado"],
+  [30,46193,"00:00","Escocia","SCO","Marruecos","MAR",null,null,"Programado"],
+  [31,46193,"02:30","Brasil","BRA","Haití","HAI",null,null,"Programado"],
+  [32,46193,"05:00","Turquía","TUR","Paraguay","PAR",null,null,"Programado"],
+  [33,46193,"19:00","Países Bajos","NED","Suecia","SWE",null,null,"Programado"],
+  [34,46193,"22:00","Alemania","GER","Costa de Marfil","CIV",null,null,"Programado"],
+  [35,46194,"02:00","Ecuador","ECU","Curazao","CUW",null,null,"Programado"],
+  [36,46194,"06:00","Túnez","TUN","Japón","JPN",null,null,"Programado"],
+  [37,46194,"18:00","España","ESP","Arabia Saudí","KSA",null,null,"Programado"],
+  [38,46194,"21:00","Bélgica","BEL","Irán","IRN",null,null,"Programado"],
+  [39,46195,"00:00","Uruguay","URU","Cabo Verde","CPV",null,null,"Programado"],
+  [40,46195,"03:00","Nueva Zelanda","NZL","Egipto","EGY",null,null,"Programado"],
+  [41,46195,"19:00","Argentina","ARG","Austria","AUT",null,null,"Programado"],
+  [42,46195,"23:00","Francia","FRA","Irak","IRQ",null,null,"Programado"],
+  [43,46196,"02:00","Noruega","NOR","Senegal","SEN",null,null,"Programado"],
+  [44,46196,"05:00","Jordania","JOR","Argelia","ALG",null,null,"Programado"],
+  [45,46196,"19:00","Portugal","POR","Uzbekistán","UZB",null,null,"Programado"],
+  [46,46196,"22:00","Inglaterra","ENG","Ghana","GHA",null,null,"Programado"],
+  [47,46197,"01:00","Panamá","PAN","Croacia","CRO",null,null,"Programado"],
+  [48,46197,"04:00","Colombia","COL","RD Congo","COD",null,null,"Programado"],
+  [49,46197,"21:00","Suiza","SUI","Canadá","CAN",null,null,"Programado"],
+  [50,46197,"21:00","Bosnia y Herzegovina","BIH","Catar","QAT",null,null,"Programado"],
+  [51,46198,"00:00","Escocia","SCO","Brasil","BRA",null,null,"Programado"],
+  [52,46198,"00:00","Marruecos","MAR","Haití","HAI",null,null,"Programado"],
+  [53,46198,"03:00","Chequia","CZE","México","MEX",null,null,"Programado"],
+  [54,46198,"03:00","Sudáfrica","RSA","Corea del Sur","KOR",null,null,"Programado"],
+  [55,46198,"22:00","Ecuador","ECU","Alemania","GER",null,null,"Programado"],
+  [56,46198,"22:00","Curazao","CUW","Costa de Marfil","CIV",null,null,"Programado"],
+  [57,46199,"01:00","Túnez","TUN","Países Bajos","NED",null,null,"Programado"],
+  [58,46199,"01:00","Japón","JPN","Suecia","SWE",null,null,"Programado"],
+  [59,46199,"04:00","Turquía","TUR","Estados Unidos","USA",null,null,"Programado"],
+  [60,46199,"04:00","Paraguay","PAR","Australia","AUS",null,null,"Programado"],
+  [61,46199,"21:00","Noruega","NOR","Francia","FRA",null,null,"Programado"],
+  [62,46199,"21:00","Senegal","SEN","Irak","IRQ",null,null,"Programado"],
+  [63,46200,"02:00","Uruguay","URU","España","ESP",null,null,"Programado"],
+  [64,46200,"02:00","Cabo Verde","CPV","Arabia Saudí","KSA",null,null,"Programado"],
+  [65,46200,"05:00","Nueva Zelanda","NZL","Bélgica","BEL",null,null,"Programado"],
+  [66,46200,"05:00","Egipto","EGY","Irán","IRN",null,null,"Programado"],
+  [67,46200,"23:00","Panamá","PAN","Inglaterra","ENG",null,null,"Programado"],
+  [68,46200,"23:00","Croacia","CRO","Ghana","GHA",null,null,"Programado"],
+  [69,46201,"01:30","Colombia","COL","Portugal","POR",null,null,"Programado"],
+  [70,46201,"01:30","RD Congo","COD","Uzbekistán","UZB",null,null,"Programado"],
+  [71,46201,"04:00","Jordania","JOR","Argentina","ARG",null,null,"Programado"],
+  [72,46201,"04:00","Argelia","ALG","Austria","AUT",null,null,"Programado"],
+].map(([id,ds,time,t1,c1,t2,c2,s1,s2,st])=>({
+  id, ds, time, t1, c1, t2, c2,
+  s1:s1??null, s2:s2??null, st,
+  dateStr:fmtDate(ds), known:true, round:getRound(id),
+  kickoffMs:kickoffFromExcel(ds,time)
+}));
+
+const KNOCKOUT_MATCHES = [
+  // Ronda de 32 (nueva ronda 2026, 32 equipos clasificados) — fechas y emparejamientos oficiales FIFA
+  [73,"2026-06-28","21:00","1° Grupo A","","2° Grupo B","","Inglewood, CA"],
+  [74,"2026-06-29","19:00","1° Grupo C","","2° Grupo F","","Houston"],
+  [75,"2026-06-29","22:30","1° Grupo E","","Mejor 3° (A/B/C/D/F)","","Foxborough, MA"],
+  [76,"2026-06-30","03:00","1° Grupo F","","2° Grupo C","","Guadalupe, México"],
+  [77,"2026-06-30","19:00","2° Grupo E","","2° Grupo I","","Arlington, TX"],
+  [78,"2026-06-30","23:00","1° Grupo I","","Mejor 3° (C/D/F/G/H)","","East Rutherford, NJ"],
+  [79,"2026-07-01","03:00","1° Grupo A","","Mejor 3° (C/E/F/H/I)","","Ciudad de México"],
+  [80,"2026-07-01","18:00","1° Grupo L","","Mejor 3° (E/H/I/J/K)","","Atlanta"],
+  [81,"2026-07-01","22:00","1° Grupo G","","Mejor 3° (A/E/H/I/J)","","Seattle"],
+  [82,"2026-07-02","02:00","1° Grupo D","","Mejor 3° (B/E/F/I/J)","","Santa Clara, CA"],
+  [83,"2026-07-02","21:00","1° Grupo H","","2° Grupo J","","Inglewood, CA"],
+  [84,"2026-07-03","01:00","2° Grupo K","","2° Grupo L","","Toronto"],
+  [85,"2026-07-03","05:00","1° Grupo B","","Mejor 3° (E/F/G/I/J)","","Vancouver"],
+  [86,"2026-07-03","20:00","2° Grupo D","","2° Grupo G","","Arlington, TX"],
+  [87,"2026-07-04","00:00","1° Grupo J","","2° Grupo H","","Miami Gardens, FL"],
+  [88,"2026-07-04","03:30","1° Grupo K","","Mejor 3° (D/E/I/J/L)","","Kansas City"],
+  // Octavos de Final (Round of 16) — emparejamientos pendientes del resultado de la Ronda de 32
+  [89,"2026-07-04","19:00","Por definir","","Por definir","","Houston"],
+  [90,"2026-07-04","23:00","Por definir","","Por definir","","Filadelfia"],
+  [91,"2026-07-05","22:00","Por definir","","Por definir","","East Rutherford, NJ"],
+  [92,"2026-07-06","02:00","Por definir","","Por definir","","Ciudad de México"],
+  [93,"2026-07-06","21:00","Por definir","","Por definir","","Arlington, TX"],
+  [94,"2026-07-06","23:00","Por definir","","Por definir","","Seattle"],
+  [95,"2026-07-07","18:00","Por definir","","Por definir","","Atlanta"],
+  [96,"2026-07-07","22:00","Por definir","","Por definir","","Vancouver"],
+  // Cuartos de Final
+  [97,"2026-07-09","22:00","Por definir","","Por definir","","Foxborough, MA"],
+  [98,"2026-07-10","21:00","Por definir","","Por definir","","Inglewood, CA"],
+  [99,"2026-07-11","23:00","Por definir","","Por definir","","Miami Gardens, FL"],
+  [100,"2026-07-12","03:00","Por definir","","Por definir","","Kansas City"],
+  // Semifinales
+  [101,"2026-07-14","21:00","Por definir","","Por definir","","Arlington, TX"],
+  [102,"2026-07-15","21:00","Por definir","","Por definir","","Atlanta"],
+  // 3er puesto y Final
+  [103,"2026-07-18","23:00","Por definir","","Por definir","","Miami Gardens, FL"],
+  [104,"2026-07-19","21:00","Por definir","","Por definir","","East Rutherford, NJ"],
+].map(([id,iso,time,t1,c1,t2,c2,venue])=>({
+  id, time, t1, c1, t2, c2, venue,
+  s1:null, s2:null, st:"Programado",
+  dateStr:fmtDateISO(iso), known:false, round:getRound(id),
+  kickoffMs:kickoffFromISO(iso,time)
+}));
+
+// Predicciones históricas importadas desde Excel (partidos 1-28, actualizado 18/06/2026).
+// Las celdas vacías del Excel significan que esa persona no envió pronóstico ese partido.
+const SEED_PREDICTIONS = {"Alberto": {"1": {"a": 0, "b": 0}, "2": {"a": 1, "b": 0}, "3": {"a": 0, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 0}, "7": {"a": 0, "b": 4}, "8": {"a": 0, "b": 1}, "9": {"a": 5, "b": 0}, "10": {"a": 2, "b": 0}, "11": {"a": 0, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 5, "b": 0}, "14": {"a": 3, "b": 1}, "17": {"a": 3, "b": 0}, "18": {"a": 0, "b": 5}, "19": {"a": 1, "b": 0}, "20": {"a": 1, "b": 0}, "21": {"a": 4, "b": 0}, "22": {"a": 2, "b": 0}, "23": {"a": 3, "b": 0}, "24": {"a": 0, "b": 5}, "25": {"a": 2, "b": 0}, "26": {"a": 0, "b": 1}}, "Alejandro": {"1": {"a": 3, "b": 1}, "2": {"a": 2, "b": 1}, "3": {"a": 3, "b": 0}, "4": {"a": 2, "b": 2}, "5": {"a": 0, "b": 3}, "6": {"a": 1, "b": 2}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 2}, "9": {"a": 4, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 0, "b": 3}, "12": {"a": 1, "b": 1}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 1}, "17": {"a": 3, "b": 1}, "18": {"a": 0, "b": 3}, "19": {"a": 2, "b": 0}, "20": {"a": 2, "b": 0}, "22": {"a": 1, "b": 2}, "23": {"a": 1, "b": 1}, "24": {"a": 0, "b": 3}, "25": {"a": 2, "b": 0}, "26": {"a": 2, "b": 0}}, "Camila": {"1": {"a": 1, "b": 0}, "2": {"a": 2, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 3, "b": 1}, "7": {"a": 0, "b": 3}, "8": {"a": 1, "b": 1}, "9": {"a": 4, "b": 0}, "10": {"a": 1, "b": 0}, "11": {"a": 1, "b": 1}, "12": {"a": 1, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 0}, "15": {"a": 0, "b": 1}, "16": {"a": 1, "b": 0}, "17": {"a": 3, "b": 1}, "18": {"a": 1, "b": 1}, "19": {"a": 2, "b": 1}, "20": {"a": 1, "b": 0}, "21": {"a": 2, "b": 0}, "22": {"a": 2, "b": 2}, "23": {"a": 1, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 1, "b": 0}, "26": {"a": 2, "b": 1}}, "Carlos Mauricio Muñoz": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 1}, "3": {"a": 2, "b": 1}, "4": {"a": 2, "b": 0}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 1, "b": 1}, "8": {"a": 1, "b": 1}, "9": {"a": 3, "b": 1}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 1}, "14": {"a": 2, "b": 0}, "15": {"a": 1, "b": 2}, "16": {"a": 1, "b": 0}, "17": {"a": 3, "b": 1}, "18": {"a": 0, "b": 2}, "19": {"a": 2, "b": 1}, "20": {"a": 1, "b": 0}, "21": {"a": 2, "b": 0}, "22": {"a": 2, "b": 0}, "23": {"a": 2, "b": 0}, "24": {"a": 1, "b": 2}, "25": {"a": 1, "b": 2}, "26": {"a": 1, "b": 0}}, "Chano": {"1": {"a": 2, "b": 1}, "2": {"a": 1, "b": 2}, "3": {"a": 1, "b": 1}, "4": {"a": 3, "b": 1}, "5": {"a": 0, "b": 1}, "6": {"a": 2, "b": 2}, "7": {"a": 0, "b": 2}, "8": {"a": 1, "b": 1}, "9": {"a": 4, "b": 0}, "10": {"a": 2, "b": 2}, "11": {"a": 1, "b": 1}, "12": {"a": 2, "b": 1}, "13": {"a": 3, "b": 1}, "14": {"a": 2, "b": 2}, "15": {"a": 1, "b": 3}, "16": {"a": 1, "b": 0}, "17": {"a": 3, "b": 2}, "18": {"a": 0, "b": 2}, "19": {"a": 3, "b": 0}, "20": {"a": 1, "b": 1}, "21": {"a": 4, "b": 1}, "22": {"a": 2, "b": 2}, "23": {"a": 2, "b": 1}, "24": {"a": 1, "b": 2}, "25": {"a": 3, "b": 1}, "26": {"a": 2, "b": 2}, "27": {"a": 1, "b": 1}, "28": {"a": 1, "b": 2}}, "Daniela Rizo": {"1": {"a": 2, "b": 1}, "2": {"a": 2, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 3, "b": 1}, "5": {"a": 0, "b": 3}, "6": {"a": 3, "b": 1}, "7": {"a": 0, "b": 3}, "8": {"a": 1, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 3, "b": 1}, "11": {"a": 1, "b": 2}, "12": {"a": 1, "b": 0}, "13": {"a": 2, "b": 1}, "14": {"a": 1, "b": 1}, "15": {"a": 1, "b": 2}, "16": {"a": 1, "b": 1}, "17": {"a": 2, "b": 1}, "18": {"a": 0, "b": 1}, "19": {"a": 2, "b": 0}, "20": {"a": 1, "b": 1}, "21": {"a": 3, "b": 1}, "22": {"a": 2, "b": 1}, "23": {"a": 2, "b": 1}, "24": {"a": 1, "b": 2}, "25": {"a": 1, "b": 2}, "26": {"a": 2, "b": 1}}, "David": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 0}, "7": {"a": 1, "b": 2}, "8": {"a": 1, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 0}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 0}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 0}, "17": {"a": 2, "b": 0}, "18": {"a": 0, "b": 2}, "19": {"a": 3, "b": 0}, "20": {"a": 2, "b": 0}, "21": {"a": 3, "b": 0}, "22": {"a": 1, "b": 1}, "23": {"a": 1, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 1, "b": 0}, "26": {"a": 2, "b": 1}}, "Ernesto Trujillo Roble": {"1": {"a": 1, "b": 2}, "2": {"a": 0, "b": 2}, "3": {"a": 0, "b": 2}, "4": {"a": 1, "b": 2}, "5": {"a": 0, "b": 1}, "6": {"a": 3, "b": 1}, "7": {"a": 0, "b": 3}, "8": {"a": 1, "b": 1}, "9": {"a": 5, "b": 0}, "10": {"a": 3, "b": 2}, "11": {"a": 2, "b": 1}, "12": {"a": 1, "b": 1}, "13": {"a": 4, "b": 0}, "14": {"a": 3, "b": 1}, "19": {"a": 3, "b": 1}, "20": {"a": 2, "b": 0}, "22": {"a": 2, "b": 0}}, "Fabiola Ramirez": {"1": {"a": 2, "b": 2}, "2": {"a": 1, "b": 0}, "3": {"a": 1, "b": 2}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 1}, "12": {"a": 1, "b": 0}, "13": {"a": 2, "b": 1}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 1}, "16": {"a": 1, "b": 1}, "17": {"a": 1, "b": 0}, "18": {"a": 1, "b": 2}, "19": {"a": 2, "b": 1}, "20": {"a": 1, "b": 0}, "21": {"a": 2, "b": 1}, "22": {"a": 2, "b": 1}, "23": {"a": 2, "b": 1}, "24": {"a": 1, "b": 1}, "25": {"a": 2, "b": 1}, "26": {"a": 3, "b": 2}, "27": {"a": 1, "b": 2}, "28": {"a": 2, "b": 2}}, "Fernando Rojas-Vizcaya": {"1": {"a": 1, "b": 1}, "2": {"a": 1, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 2}, "8": {"a": 1, "b": 1}, "9": {"a": 4, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "18": {"a": 0, "b": 3}, "19": {"a": 2, "b": 0}, "20": {"a": 2, "b": 1}, "21": {"a": 3, "b": 1}, "22": {"a": 2, "b": 1}, "23": {"a": 2, "b": 1}, "24": {"a": 1, "b": 2}, "25": {"a": 1, "b": 2}, "26": {"a": 2, "b": 1}}, "Gabriel Rojas": {"1": {"a": 2, "b": 1}, "2": {"a": 1, "b": 1}, "3": {"a": 0, "b": 0}, "4": {"a": 1, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 1, "b": 2}, "7": {"a": 0, "b": 3}, "8": {"a": 0, "b": 1}, "9": {"a": 4, "b": 0}, "10": {"a": 1, "b": 1}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 1, "b": 1}, "15": {"a": 0, "b": 2}, "16": {"a": 2, "b": 1}, "17": {"a": 2, "b": 1}, "18": {"a": 0, "b": 2}, "19": {"a": 1, "b": 1}, "20": {"a": 2, "b": 1}, "21": {"a": 3, "b": 1}, "22": {"a": 2, "b": 2}, "23": {"a": 3, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 1, "b": 1}, "26": {"a": 2, "b": 2}}, "José María Solís": {"1": {"a": 2, "b": 0}, "2": {"a": 2, "b": 1}, "3": {"a": 1, "b": 1}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 2}, "7": {"a": 0, "b": 2}, "8": {"a": 1, "b": 2}, "9": {"a": 4, "b": 0}, "10": {"a": 2, "b": 2}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 0}, "15": {"a": 1, "b": 3}, "16": {"a": 2, "b": 0}, "17": {"a": 3, "b": 0}, "18": {"a": 0, "b": 2}, "19": {"a": 2, "b": 1}, "20": {"a": 3, "b": 0}, "21": {"a": 4, "b": 0}, "22": {"a": 2, "b": 1}, "23": {"a": 1, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 2, "b": 1}, "26": {"a": 1, "b": 0}}, "Manuela Plazas": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 0}, "3": {"a": 2, "b": 2}, "4": {"a": 2, "b": 2}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 1}, "8": {"a": 1, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 3}, "11": {"a": 1, "b": 2}, "12": {"a": 1, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 2}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 1}, "17": {"a": 2, "b": 1}, "18": {"a": 0, "b": 3}, "19": {"a": 3, "b": 1}, "20": {"a": 1, "b": 0}, "21": {"a": 3, "b": 0}, "22": {"a": 2, "b": 2}, "23": {"a": 2, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 2, "b": 0}, "26": {"a": 0, "b": 1}}, "María Luisa": {"1": {"a": 0, "b": 1}, "2": {"a": 1, "b": 0}, "3": {"a": 0, "b": 2}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 1}, "9": {"a": 4, "b": 0}, "10": {"a": 1, "b": 1}, "11": {"a": 1, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 0}, "17": {"a": 2, "b": 2}, "18": {"a": 0, "b": 2}, "19": {"a": 3, "b": 1}, "20": {"a": 3, "b": 1}, "21": {"a": 4, "b": 0}, "22": {"a": 2, "b": 1}, "23": {"a": 2, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 1, "b": 2}, "26": {"a": 2, "b": 1}}, "Martin Torres": {"1": {"a": 3, "b": 0}, "2": {"a": 2, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 3}, "6": {"a": 3, "b": 0}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 2}, "9": {"a": 5, "b": 0}, "10": {"a": 2, "b": 0}, "11": {"a": 2, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 3}, "16": {"a": 2, "b": 1}, "17": {"a": 3, "b": 1}, "18": {"a": 0, "b": 3}, "19": {"a": 3, "b": 1}, "20": {"a": 2, "b": 1}, "21": {"a": 3, "b": 2}, "22": {"a": 2, "b": 1}, "23": {"a": 3, "b": 0}, "24": {"a": 0, "b": 3}, "25": {"a": 2, "b": 0}, "26": {"a": 2, "b": 1}}, "Monika De Rojas Jaramillo": {"1": {"a": 2, "b": 1}, "2": {"a": 2, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 1, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 0}, "7": {"a": 0, "b": 1}, "8": {"a": 1, "b": 0}, "9": {"a": 2, "b": 0}, "10": {"a": 1, "b": 2}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 1}, "13": {"a": 3, "b": 0}, "14": {"a": 1, "b": 0}, "15": {"a": 1, "b": 2}, "16": {"a": 0, "b": 0}, "17": {"a": 3, "b": 1}, "18": {"a": 0, "b": 2}, "19": {"a": 3, "b": 0}, "20": {"a": 3, "b": 0}, "21": {"a": 2, "b": 0}, "22": {"a": 2, "b": 1}, "23": {"a": 2, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 1, "b": 2}, "26": {"a": 1, "b": 1}}, "Nancho": {"1": {"a": 2, "b": 1}, "2": {"a": 2, "b": 1}, "3": {"a": 2, "b": 1}, "4": {"a": 1, "b": 1}, "5": {"a": 0, "b": 0}, "6": {"a": 2, "b": 0}, "7": {"a": 0, "b": 1}, "8": {"a": 0, "b": 0}, "9": {"a": 3, "b": 0}, "10": {"a": 1, "b": 0}, "11": {"a": 0, "b": 2}, "12": {"a": 1, "b": 1}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 1}, "17": {"a": 2, "b": 0}, "18": {"a": 0, "b": 3}, "19": {"a": 4, "b": 0}, "20": {"a": 2, "b": 0}, "21": {"a": 4, "b": 0}, "22": {"a": 3, "b": 1}, "23": {"a": 0, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 0, "b": 2}, "26": {"a": 3, "b": 2}}, "Nik": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 1}, "3": {"a": 2, "b": 1}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 1, "b": 2}, "8": {"a": 0, "b": 1}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 1}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 0}, "17": {"a": 3, "b": 0}, "18": {"a": 0, "b": 2}, "19": {"a": 1, "b": 0}, "20": {"a": 2, "b": 1}, "21": {"a": 3, "b": 0}, "22": {"a": 2, "b": 2}, "23": {"a": 1, "b": 2}, "24": {"a": 0, "b": 2}, "25": {"a": 2, "b": 0}, "26": {"a": 2, "b": 1}, "27": {"a": 2, "b": 0}, "28": {"a": 1, "b": 1}}, "Rafael Uribe": {"1": {"a": 2, "b": 0}, "2": {"a": 3, "b": 0}, "3": {"a": 2, "b": 0}, "5": {"a": 2, "b": 0}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 1}, "8": {"a": 0, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 1, "b": 2}, "11": {"a": 0, "b": 0}, "12": {"a": 1, "b": 1}, "13": {"a": 1, "b": 0}, "14": {"a": 1, "b": 2}, "15": {"a": 1, "b": 2}, "16": {"a": 0, "b": 1}, "17": {"a": 3, "b": 1}, "18": {"a": 0, "b": 1}, "19": {"a": 2, "b": 0}, "20": {"a": 1, "b": 0}, "21": {"a": 3, "b": 1}, "22": {"a": 1, "b": 1}, "23": {"a": 2, "b": 0}, "24": {"a": 1, "b": 2}, "25": {"a": 0, "b": 0}, "26": {"a": 1, "b": 1}}, "Ricardo Plazas": {"1": {"a": 1, "b": 0}, "2": {"a": 1, "b": 1}, "3": {"a": 0, "b": 1}, "4": {"a": 2, "b": 2}, "5": {"a": 0, "b": 3}, "6": {"a": 2, "b": 2}, "7": {"a": 0, "b": 3}, "8": {"a": 1, "b": 2}, "9": {"a": 5, "b": 0}, "10": {"a": 3, "b": 1}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 0}, "13": {"a": 2, "b": 0}, "14": {"a": 1, "b": 1}, "15": {"a": 1, "b": 1}, "16": {"a": 2, "b": 1}, "17": {"a": 2, "b": 1}, "18": {"a": 1, "b": 1}, "19": {"a": 1, "b": 1}, "20": {"a": 2, "b": 2}, "21": {"a": 3, "b": 0}, "22": {"a": 1, "b": 1}, "23": {"a": 2, "b": 0}, "24": {"a": 1, "b": 2}, "25": {"a": 2, "b": 0}, "26": {"a": 2, "b": 2}, "27": {"a": 1, "b": 1}, "28": {"a": 1, "b": 2}}, "Santy": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 1}, "3": {"a": 2, "b": 1}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 3, "b": 1}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 1, "b": 1}, "16": {"a": 1, "b": 0}, "17": {"a": 2, "b": 1}, "18": {"a": 1, "b": 2}, "19": {"a": 2, "b": 0}, "20": {"a": 2, "b": 0}, "21": {"a": 3, "b": 0}, "22": {"a": 1, "b": 1}, "23": {"a": 3, "b": 1}, "24": {"a": 1, "b": 2}, "25": {"a": 1, "b": 1}, "26": {"a": 2, "b": 0}}, "Sergio Fuentes": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 2}, "3": {"a": 2, "b": 1}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 1}, "8": {"a": 1, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 1}, "14": {"a": 2, "b": 1}, "18": {"a": 0, "b": 2}, "19": {"a": 3, "b": 1}, "20": {"a": 1, "b": 1}, "21": {"a": 3, "b": 1}, "22": {"a": 2, "b": 2}, "23": {"a": 2, "b": 1}, "24": {"a": 1, "b": 3}, "25": {"a": 1, "b": 2}, "26": {"a": 2, "b": 0}, "27": {"a": 2, "b": 0}, "28": {"a": 2, "b": 1}}, "Sergio Rojas": {"1": {"a": 2, "b": 0}, "2": {"a": 0, "b": 2}, "3": {"a": 1, "b": 2}, "4": {"a": 1, "b": 0}, "5": {"a": 0, "b": 2}, "6": {"a": 1, "b": 1}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 2}, "9": {"a": 5, "b": 0}, "10": {"a": 0, "b": 0}, "11": {"a": 1, "b": 1}, "12": {"a": 3, "b": 1}, "13": {"a": 2, "b": 0}, "14": {"a": 2, "b": 0}, "18": {"a": 0, "b": 3}, "19": {"a": 2, "b": 1}, "20": {"a": 3, "b": 0}, "21": {"a": 2, "b": 1}, "22": {"a": 1, "b": 1}, "23": {"a": 3, "b": 0}, "24": {"a": 0, "b": 2}, "25": {"a": 2, "b": 1}, "26": {"a": 1, "b": 2}}}
+const SEED_VERSION = "2026-06-18-v2-28matches";
+
+const ALL_MATCHES = [...GROUP_MATCHES, ...KNOCKOUT_MATCHES];
+
+// PINs asignados por el organizador. Solo se guarda el hash (SHA-256 de "Nombre:PIN"),
+// nunca el PIN en texto plano, para que nadie pueda leerlo inspeccionando el código.
+const PIN_HASHES = {"Alberto": "54775fcbeecdf66cfc06892418d4ff0f3c9956ae3ef777a520a2dfd8037b1090", "Alejandro": "ed5d9164fc097e173eb25d61100f3829a3008cde476cac0f98c0e9869f667536", "Camila": "d3699d32d787701fae7829b0662d30ee3e61c4d56d9f13faad237b2c6c8f3bc1", "Carlos Mauricio Muñoz": "3bcdba4359265121e695dfbd602ebcbe3405f9a748967fb75d1171197baafa37", "Chano": "be09be950ed58238e64a9664429bc1244bbda9538649e830ca6b28c8e6b0f4fa", "Daniela Rizo": "d3dbf16d25f523450c5b69d610c3b0d5cd20a4fed359aedee0143284d16a3b4f", "David": "9a114574bd639af6b04b9dbbe189fcbfa3e74b96f9fe1cad768a3955867f0175", "Ernesto Trujillo Roble": "6cd82d39e0a5200d4e1df39f6de223ab264a17eb89e509646472f8fac5a2ef86", "Fabiola Ramirez": "32f8a754a01ebc31c2ab4432d68bdfc1b30cccecbc0c99580d7c3d59437be4f2", "Fernando Rojas-Vizcaya": "40254f0d5cd5edd0b4a26c6a42acfb35963cb9ed7dd04b63664f52d80f5a7396", "Gabriel Rojas": "62d0e86fcde5d618760ea8d8df0759185b9c28c59d19ced1f139ef0a933058fe", "José María Solís": "1a08782d08956cd2679d8245a03e0299040403c807b39b33354068eefcf6d8be", "Manuela Plazas": "8f8d0ef10759096ae9f3cfd65adb45197f17d3636ee3dd4de63b25a3b35e8ee7", "Martin Torres": "b4cc3f3e1f6e94103f1e6c29ab580ccbc2d5cddfc2fe534724082106ea1e11aa", "María Luisa": "71bad5c7acf5b867f6c2f0d2689178349c255f9ec1f383715667d37ccfd5a202", "Monika De Rojas Jaramillo": "055f6777fede57294b071e0a1a4c7b11e8466e88ad8a9a1e155f57019113ba5d", "Nancho": "2bb5c1f09cd2beb10444e5e8d1d63161a3bf0d42ca20a09286f47dcbb4876c79", "Nik": "a25bba43a7a1915f8e68327bde711ae1f41ff1655a8738b7e9681821682da977", "Rafael Uribe": "5392a884cf97e1be7dab40dd8a76cda7166d8d181577fdcf4b5ccd492432d505", "Ricardo Plazas": "929c0f3d0960f34d5e6d5a0ac221e1b3c9c8fa2a21da8d6d0fff16736cd6ff39", "Santy": "50e2a590a9ebdc28671e455fd372dcabdc065da98c2b699dc89268d5c0e4a158", "Sergio Fuentes": "236656f96c7297bb0ce6a476685d15e62b3e9bc69602c0384d3f6b7680f443ff", "Sergio Rojas": "1c93085db58c4450fa2a0ad75d53ac7aa6ad5be8ff0c8d105cc12e0262cb0949"};
+
+async function sha256Hex(str){
+  const enc=new TextEncoder().encode(str);
+  const buf=await crypto.subtle.digest("SHA-256",enc);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+async function verifyPin(name,pin){
+  if(!PIN_HASHES[name]) return false;
+  const hash=await sha256Hex(`${name}:${pin}`);
+  return hash===PIN_HASHES[name];
+}
+
+function calcPts(pred, s1, s2){
+  if(s1===null||s2===null) return null;
+  if(!pred||pred.a==null||pred.b==null) return null;
+  if(pred.a===s1&&pred.b===s2) return 3;
+  if(Math.sign(pred.a-pred.b)===Math.sign(s1-s2)) return 1;
+  return 0;
+}
+
+function calcStats(name, allPreds, matches){
+  const myPreds = allPreds[name]||{};
+  let pts=0,exact=0,correct=0,predicted=0;
+  for(const m of matches){
+    if(m.st!=="Finalizado") continue;
+    const pred=myPreds[m.id];
+    if(!pred) continue;
+    predicted++;
+    const p=calcPts(pred,m.s1,m.s2);
+    if(p===3){pts+=3;exact++;correct++;}
+    else if(p===1){pts+=1;correct++;}
+  }
+  return {pts,exact,correct,predicted};
+}
+
+function StatusBadge({status}){
+  if(status==="Finalizado") return <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">FIN</span>;
+  if(status==="En vivo") return(
+    <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+      <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse inline-block"></span>
+      EN VIVO
+    </span>
+  );
+  if(status==="Cerrado") return(
+    <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+      🔒 Cerrado
+    </span>
+  );
+  return <span className="text-xs bg-blue-50 text-blue-500 px-2 py-0.5 rounded-full font-medium">Próximo</span>;
+}
+
+function PtsBadge({pts}){
+  if(pts===null||pts===undefined) return null;
+  if(pts===3) return <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">+3 ★</span>;
+  if(pts===1) return <span className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">+1 ✓</span>;
+  return <span className="text-xs font-bold text-gray-400 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full">✗</span>;
+}
+
+function PredInput({matchId,userName,pred,onSave,locked}){
+  const [a,setA]=useState(pred?.a!=null?String(pred.a):"");
+  const [b,setB]=useState(pred?.b!=null?String(pred.b):"");
+
+  useEffect(()=>{
+    setA(pred?.a!=null?String(pred.a):"");
+    setB(pred?.b!=null?String(pred.b):"");
+  },[userName,matchId]);
+
+  const tryCommit=useCallback((va,vb)=>{
+    const na=parseInt(va,10),nb=parseInt(vb,10);
+    if(!isNaN(na)&&!isNaN(nb)&&na>=0&&nb>=0) onSave({a:na,b:nb});
+  },[onSave]);
+
+  if(locked){
+    if(pred?.a==null) return <span className="text-sm text-gray-300 italic">sin pronóstico</span>;
+    return <span className="text-sm font-bold text-gray-600">{pred.a} — {pred.b}</span>;
+  }
+  return(
+    <div className="flex items-center gap-1.5">
+      <input type="number" min="0" max="25" value={a}
+        onChange={e=>{setA(e.target.value);if(e.target.value!==""&&b!=="")tryCommit(e.target.value,b);}}
+        onBlur={()=>tryCommit(a,b)}
+        className="w-11 h-9 text-center border-2 border-gray-200 rounded-lg text-sm font-bold focus:border-blue-400 focus:outline-none bg-white"
+        placeholder="?"/>
+      <span className="text-gray-400 font-bold text-sm">-</span>
+      <input type="number" min="0" max="25" value={b}
+        onChange={e=>{setB(e.target.value);if(a!==""&&e.target.value!=="")tryCommit(a,e.target.value);}}
+        onBlur={()=>tryCommit(a,b)}
+        className="w-11 h-9 text-center border-2 border-gray-200 rounded-lg text-sm font-bold focus:border-blue-400 focus:outline-none bg-white"
+        placeholder="?"/>
+    </div>
+  );
+}
+
+function Clasificacion({preds,matches}){
+  const rows=PARTICIPANTS
+    .map(name=>({name,...calcStats(name,preds,matches)}))
+    .sort((a,b)=>b.pts!==a.pts?b.pts-a.pts:b.exact-a.exact);
+  const medals=["🥇","🥈","🥉"];
+  return(
+    <div className="p-4">
+      <p className="text-xs text-gray-400 mb-3">Desempate: marcadores exactos · Se actualiza en tiempo real</p>
+      <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-800 text-gray-100 text-xs">
+              <th className="py-2.5 pl-3 pr-1 text-left w-8">#</th>
+              <th className="py-2.5 px-2 text-left">Participante</th>
+              <th className="py-2.5 px-2 text-center w-12">Pts</th>
+              <th className="py-2.5 px-2 text-center w-10 text-yellow-300">★</th>
+              <th className="py-2.5 pr-3 text-center w-10 text-green-300">✓</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r,i)=>(
+              <tr key={r.name} className={`border-t border-gray-100 ${i===0?"bg-yellow-50":i===1?"bg-gray-50":i===2?"bg-orange-50/70":""}`}>
+                <td className="py-2.5 pl-3 pr-1 text-base">{medals[i]||<span className="text-xs text-gray-400 font-bold">{i+1}</span>}</td>
+                <td className="py-2.5 px-2 font-semibold text-gray-800 text-sm" style={{maxWidth:"140px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</td>
+                <td className="py-2.5 px-2 text-center font-black text-blue-700 text-lg">{r.pts}</td>
+                <td className="py-2.5 px-2 text-center font-semibold text-emerald-600">{r.exact}</td>
+                <td className="py-2.5 pr-3 text-center text-gray-500">{r.correct}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-xs text-gray-400">Pts = puntos · ★ = marcador exacto (3pts) · ✓ = resultado correcto (1pt)</p>
+    </div>
+  );
+}
+
+function Partidos({matches}){
+  const [filter,setFilter]=useState("all");
+  const filtered=matches.filter(m=>
+    filter==="all"||(filter==="done"&&m.effSt==="Finalizado")||
+    (filter==="live"&&(m.effSt==="En vivo"||m.effSt==="Cerrado"))||(filter==="next"&&m.effSt==="Programado")
+  );
+  const groups={};
+  filtered.forEach(m=>{if(!groups[m.dateStr])groups[m.dateStr]=[];groups[m.dateStr].push(m);});
+  return(
+    <div className="p-4">
+      <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+        {[["all","Todos"],["done","Finalizados"],["live","En vivo"],["next","Próximos"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setFilter(v)}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium whitespace-nowrap transition-colors
+              ${filter===v?"bg-gray-800 text-white":"bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+      {Object.entries(groups).map(([date,ms])=>(
+        <div key={date} className="mb-5">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">{date}</p>
+          <div className="space-y-2">
+            {ms.map(m=>(
+              <div key={m.id} className={`rounded-xl border p-3 bg-white ${m.effSt==="En vivo"?"border-red-200":m.effSt==="Cerrado"?"border-orange-200":"border-gray-100"}`}>
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs text-gray-400">#{m.id} · {m.time}h · {m.round}{m.venue?` · ${m.venue}`:""}</span>
+                  <StatusBadge status={m.effSt}/>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="flex-1 text-right font-semibold text-gray-800 text-sm truncate">{m.t1}</span>
+                  <span className={`font-black text-base px-2 min-w-[72px] text-center
+                    ${m.effSt==="Programado"?"text-gray-300":m.effSt==="En vivo"?"text-red-600":m.effSt==="Cerrado"?"text-orange-500":"text-gray-900"}`}>
+                    {m.st==="Programado"?"vs":`${m.s1??"?"} — ${m.s2??"?"}`}
+                  </span>
+                  <span className="flex-1 font-semibold text-gray-800 text-sm truncate">{m.t2}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      {filtered.length===0&&<div className="text-center py-12 text-gray-400">No hay partidos en esta categoría</div>}
+    </div>
+  );
+}
+
+function EnVivo({matches}){
+  const live=matches.filter(m=>m.effSt==="En vivo"||m.effSt==="Cerrado");
+  const next=matches.filter(m=>m.effSt==="Programado"&&m.known).slice(0,10);
+  return(
+    <div className="p-4">
+      {live.length>0&&(
+        <div className="mb-6">
+          <p className="text-xs font-bold text-red-500 uppercase tracking-wide mb-3">En vivo / en curso ahora</p>
+          <div className="space-y-3">
+            {live.map(m=>(
+              <div key={m.id} className={`rounded-2xl border p-4 ${m.effSt==="Cerrado"?"bg-orange-50 border-orange-200":"bg-red-50 border-red-200"}`}>
+                <div className="flex justify-between items-center mb-3">
+                  <p className="text-xs text-gray-500 font-medium">{m.dateStr} · {m.time}h España · {m.round}</p>
+                  <StatusBadge status={m.effSt}/>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 text-right"><p className="font-black text-gray-900 text-base">{m.t1}</p><p className="text-xs text-gray-400">{m.c1}</p></div>
+                  <p className={`text-3xl font-black px-4 min-w-[80px] text-center ${m.effSt==="Cerrado"?"text-orange-500":"text-red-600"}`}>{m.s1??"?"} — {m.s2??"?"}</p>
+                  <div className="flex-1"><p className="font-black text-gray-900 text-base">{m.t2}</p><p className="text-xs text-gray-400">{m.c2}</p></div>
+                </div>
+                {m.effSt==="Cerrado"&&<p className="text-xs text-orange-600 mt-2 text-center">Ya empezó — pronósticos cerrados. Resultado pendiente de confirmar (pulsa Actualizar).</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {live.length===0&&(
+        <div className="bg-gray-50 rounded-2xl p-6 text-center text-gray-400 mb-6">
+          <p className="text-2xl mb-1">⏸</p>
+          <p className="text-sm font-medium">No hay partidos en vivo</p>
+          <p className="text-xs mt-1">Pulsa Actualizar para comprobar</p>
+        </div>
+      )}
+      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Próximos {next.length} partidos</p>
+      <div className="space-y-2">
+        {next.map(m=>(
+          <div key={m.id} className="bg-white rounded-xl border border-gray-100 p-3 shadow-sm">
+            <p className="text-xs text-gray-400 mb-1.5">{m.dateStr} · {m.time}h España · {m.round}</p>
+            <div className="flex items-center gap-2">
+              <span className="flex-1 text-right font-semibold text-gray-800 text-sm truncate">{m.t1}</span>
+              <span className="text-gray-300 font-bold px-2">vs</span>
+              <span className="flex-1 font-semibold text-gray-800 text-sm truncate">{m.t2}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Pronosticos({preds,matches,onSave}){
+  const [name,setName]=useState("");
+  const [unlockedName,setUnlockedName]=useState("");
+  const [authLoading,setAuthLoading]=useState(true);
+  const [pinInput,setPinInput]=useState("");
+  const [pinError,setPinError]=useState("");
+  const [checking,setChecking]=useState(false);
+  const [savedIds,setSavedIds]=useState({});
+  const [saveError,setSaveError]=useState("");
+
+  const myPreds=preds[name]||{};
+  const stats=name?calcStats(name,preds,matches):null;
+  const knownMatches=matches.filter(m=>m.known);
+  const upcoming=knownMatches.filter(m=>m.st!=="Finalizado");
+  const done=knownMatches.filter(m=>m.st==="Finalizado");
+  const canEdit=name&&name===unlockedName;
+
+  useEffect(()=>{
+    (async()=>{
+      try{
+        const r=await Storage.get("wc26_unlocked",false);
+        if(r){
+          const data=JSON.parse(r.value);
+          if(data?.name&&PARTICIPANTS.includes(data.name)){
+            setUnlockedName(data.name);
+            setName(data.name);
+          }
+        }
+      }catch(e){}
+      setAuthLoading(false);
+    })();
+  },[]);
+
+  const handleSave=useCallback(async(matchId,pred)=>{
+    setSaveError("");
+    try{
+      await onSave(name,matchId,pred);
+      setSavedIds(s=>({...s,[matchId]:true}));
+      setTimeout(()=>setSavedIds(s=>({...s,[matchId]:false})),1500);
+    }catch(e){
+      setSaveError(`❌ No se pudo guardar: ${e.message}`);
+      setTimeout(()=>setSaveError(""),8000);
+    }
+  },[name,onSave]);
+
+  const handleUnlock=async()=>{
+    if(pinInput.length<4){setPinError("Introduce tu PIN de 4 dígitos");return;}
+    setChecking(true);setPinError("");
+    const ok=await verifyPin(name,pinInput);
+    setChecking(false);
+    if(ok){
+      setUnlockedName(name);
+      setPinInput("");
+      try{await Storage.set("wc26_unlocked",JSON.stringify({name}),false);}catch(e){}
+    } else {
+      setPinError("PIN incorrecto");
+    }
+  };
+
+  const handleLogout=async()=>{
+    setUnlockedName("");
+    setName("");
+    setPinInput("");
+    try{await Storage.delete("wc26_unlocked",false);}catch(e){}
+  };
+
+  return(
+    <div className="p-4">
+      <div className="mb-4">
+        <label className="block text-sm font-semibold text-gray-700 mb-1.5">¿Quién eres?</label>
+        <select value={name} onChange={e=>{setName(e.target.value);setPinInput("");setPinError("");}}
+          className="w-full border-2 border-gray-200 rounded-xl p-3 text-sm font-medium focus:outline-none focus:border-blue-400 bg-white">
+          <option value="">— Selecciona tu nombre (orden alfabético) —</option>
+          {PARTICIPANTS.map(p=><option key={p} value={p}>{p}</option>)}
+        </select>
+      </div>
+
+      {!name&&!authLoading&&(
+        <div className="text-center py-16 text-gray-400">
+          <p className="text-4xl mb-3">👤</p>
+          <p className="font-medium text-gray-500">Selecciona tu nombre</p>
+          <p className="text-sm mt-1">para ver pronósticos, o introduce tu PIN para editar los tuyos</p>
+        </div>
+      )}
+
+      {name&&!canEdit&&(
+        <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-4 mb-5">
+          <p className="text-sm font-bold text-amber-800 mb-1">🔒 Pronósticos de {name} bloqueados</p>
+          <p className="text-xs text-amber-700 mb-3">Solo {name} puede editar sus propios pronósticos. Introduce el PIN para desbloquear (puedes seguir viendo sus pronósticos sin él).</p>
+          <div className="flex gap-2">
+            <input type="password" inputMode="numeric" maxLength={4} value={pinInput}
+              onChange={e=>{setPinInput(e.target.value.replace(/\D/g,""));setPinError("");}}
+              onKeyDown={e=>{if(e.key==="Enter")handleUnlock();}}
+              placeholder="PIN (4 dígitos)"
+              className="flex-1 border-2 border-amber-300 rounded-xl p-2.5 text-sm font-semibold text-center tracking-widest focus:outline-none focus:border-amber-500 bg-white"/>
+            <button onClick={handleUnlock} disabled={checking}
+              className="bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold px-4 rounded-xl disabled:opacity-50">
+              {checking?"...":"Desbloquear"}
+            </button>
+          </div>
+          {pinError&&<p className="text-xs text-red-600 font-semibold mt-2">{pinError}</p>}
+        </div>
+      )}
+
+      {name&&canEdit&&(
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 mb-4 flex justify-between items-center">
+          <span className="text-xs font-semibold text-emerald-700">🔓 Sesión iniciada como {name}</span>
+          <button onClick={handleLogout} className="text-xs font-semibold text-emerald-700 underline hover:text-emerald-900">Cerrar sesión</button>
+        </div>
+      )}
+
+      {saveError&&(
+        <div className="bg-red-50 border border-red-200 rounded-xl p-2.5 mb-4 text-xs font-semibold text-red-700">
+          {saveError}
+        </div>
+      )}
+
+      {name&&stats&&(
+        <div className="bg-gray-800 rounded-2xl p-4 mb-5 text-white">
+          <p className="text-xs font-semibold text-gray-400 mb-3 truncate">{name}</p>
+          <div className="grid grid-cols-4 gap-2 text-center">
+            {[["Puntos",stats.pts,"text-white"],["Exactos",stats.exact,"text-yellow-300"],["Correct.",stats.correct,"text-green-300"],["Predichos",stats.predicted,"text-gray-400"]].map(([label,val,color])=>(
+              <div key={label}><p className={`text-2xl font-black ${color}`}>{val}</p><p className="text-xs text-gray-500 mt-0.5">{label}</p></div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {name&&upcoming.length>0&&(
+        <div className="mb-5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="flex-1 h-px bg-gray-200"></div>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide whitespace-nowrap">Por pronosticar ({upcoming.length})</p>
+            <div className="flex-1 h-px bg-gray-200"></div>
+          </div>
+          <div className="space-y-2">
+            {upcoming.map(m=>{
+              const pred=myPreds[m.id];
+              const inputLocked=!canEdit||!m.editable;
+              return(
+                <div key={m.id} className={`bg-white rounded-xl border-2 p-3 ${m.effSt==="En vivo"?"border-red-200":m.effSt==="Cerrado"?"border-orange-200":pred?"border-blue-100":"border-gray-100"}`}>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs text-gray-400">#{m.id} · {m.dateStr} {m.time}h</span>
+                    <div className="flex items-center gap-2">
+                      {savedIds[m.id]&&<span className="text-xs text-emerald-600 font-semibold">✓ Guardado</span>}
+                      <StatusBadge status={m.effSt}/>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 text-right text-sm font-semibold text-gray-800 truncate">{m.t1}</span>
+                    <PredInput key={`${name}-${m.id}`} matchId={m.id} userName={name} pred={pred}
+                      onSave={pr=>handleSave(m.id,pr)} locked={inputLocked}/>
+                    <span className="flex-1 text-sm font-semibold text-gray-800 truncate">{m.t2}</span>
+                  </div>
+                  {canEdit&&!m.editable&&(
+                    <p className="text-xs text-orange-600 mt-2">🔒 El partido ya empezó — ya no se puede modificar el pronóstico.</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {name&&done.length>0&&(
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <div className="flex-1 h-px bg-gray-200"></div>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Historial</p>
+            <div className="flex-1 h-px bg-gray-200"></div>
+          </div>
+          <div className="space-y-2">
+            {[...done].reverse().map(m=>{
+              const pred=myPreds[m.id];
+              const p=calcPts(pred,m.s1,m.s2);
+              return(
+                <div key={m.id} className={`rounded-xl border p-3 ${p===3?"bg-emerald-50 border-emerald-100":p===1?"bg-blue-50 border-blue-100":"bg-white border-gray-100"}`}>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <span className="text-xs text-gray-400">#{m.id} · {m.dateStr}</span>
+                    <PtsBadge pts={p}/>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 text-right text-sm font-semibold text-gray-800 truncate">{m.t1}</span>
+                    <div className="flex flex-col items-center gap-0.5 px-1">
+                      <span className="text-sm font-black text-gray-900">{m.s1} — {m.s2}</span>
+                      <PredInput matchId={m.id} userName={name} pred={pred} locked={true}/>
+                    </div>
+                    <span className="flex-1 text-sm font-semibold text-gray-800 truncate">{m.t2}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Reglas(){
+  return(
+    <div className="p-4">
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4">
+        <div>
+          <p className="font-bold text-gray-800 mb-2">⚽ Sistema de puntuación</p>
+          <div className="space-y-2 text-sm text-gray-700">
+            <div className="flex gap-3 items-start"><span className="bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded text-xs shrink-0">1 pt</span><span>Acertar el resultado (victoria local, empate o visitante)</span></div>
+            <div className="flex gap-3 items-start"><span className="bg-emerald-100 text-emerald-700 font-bold px-2 py-0.5 rounded text-xs shrink-0">3 pts</span><span>Acertar el marcador exacto (incluye el punto de resultado)</span></div>
+          </div>
+        </div>
+        <div className="border-t border-gray-100 pt-3">
+          <p className="font-bold text-gray-800 mb-2">🏆 Fase eliminatoria</p>
+          <p className="text-sm text-gray-600">Los pronósticos son sobre los 90 minutos reglamentarios, sin contar prórrogas ni penaltis.</p>
+        </div>
+        <div className="border-t border-gray-100 pt-3">
+          <p className="font-bold text-gray-800 mb-2">⏰ Plazo</p>
+          <p className="text-sm text-gray-600">Los pronósticos deben enviarse antes del inicio del partido. Sin pronóstico = 0 puntos.</p>
+        </div>
+        <div className="border-t border-gray-100 pt-3">
+          <p className="font-bold text-gray-800 mb-2">🤝 Desempate</p>
+          <p className="text-sm text-gray-600">En caso de empate a puntos, gana quien tenga más marcadores exactos. Si sigue el empate, se reparte el premio.</p>
+        </div>
+        <div className="border-t border-gray-100 pt-3 bg-amber-50 rounded-xl p-3">
+          <p className="text-xs font-bold text-amber-700 mb-1">Ejemplo</p>
+          <p className="text-xs text-amber-700">Pronóstico: España 2-1 Japón<br/>• Resultado final 1-0 → 1 pt (acierta ganador)<br/>• Resultado final 2-1 → 3 pts (marcador exacto)</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App(){
+  const [tab,setTab]=useState("ranking");
+  const [preds,setPreds]=useState({});
+  const [fetchedScores,setFetchedScores]=useState({});
+  const [loading,setLoading]=useState(true);
+  const [fetching,setFetching]=useState(false);
+  const [msg,setMsg]=useState("");
+  const [showRules,setShowRules]=useState(false);
+  const [now,setNow]=useState(()=>Date.now());
+
+  useEffect(()=>{
+    const t=setInterval(()=>setNow(Date.now()),30000);
+    return ()=>clearInterval(t);
+  },[]);
+
+  // Refs "siempre actualizadas" para que el temporizador de auto-actualización
+  // pueda leer el estado más reciente sin tener que reiniciarse cada vez que cambia `now`.
+  const fetchedScoresRef=useRef({});
+  fetchedScoresRef.current=fetchedScores;
+  const fetchingRef=useRef(false);
+
+  useEffect(()=>{
+    (async()=>{
+      let current={};
+      try{const r=await Storage.get("wc26_preds",true);if(r)current=JSON.parse(r.value);}catch(e){}
+
+      // Importación de predicciones históricas (Excel). Usamos un número de
+      // versión: si la versión guardada es distinta a la actual, esta nueva
+      // tanda de datos del Excel se considera autoritativa y SOBRESCRIBE
+      // (solo los partidos incluidos en este Excel); el resto de partidos no
+      // tocados por el Excel, y cualquier futura predicción que alguien
+      // introduzca a mano vía PIN, quedan intactos. Una vez aplicada, no se
+      // repite hasta la próxima actualización de SEED_VERSION.
+      let storedVersion=null;
+      try{const r=await Storage.get("wc26_seed_version",true);if(r)storedVersion=JSON.parse(r.value);}catch(e){}
+
+      let changed=false;
+      const merged={...current};
+      if(storedVersion!==SEED_VERSION){
+        for(const name of Object.keys(SEED_PREDICTIONS)){
+          const seedPreds=SEED_PREDICTIONS[name];
+          const existing=merged[name]?{...merged[name]}:{};
+          for(const matchIdStr of Object.keys(seedPreds)){
+            const matchId=parseInt(matchIdStr,10);
+            existing[matchId]=seedPreds[matchIdStr];
+          }
+          merged[name]=existing;
+        }
+        changed=true;
+      }
+      setPreds(merged);
+      if(changed){
+        try{await Storage.set("wc26_preds",JSON.stringify(merged),true);}catch(e){}
+        try{await Storage.set("wc26_seed_version",JSON.stringify(SEED_VERSION),true);}catch(e){}
+      }
+
+      try{const r=await Storage.get("wc26_scores",false);if(r)setFetchedScores(JSON.parse(r.value));}catch(e){}
+      setLoading(false);
+    })();
+  },[]);
+
+  const savePred=useCallback(async(name,matchId,pred)=>{
+    let updated;
+    setPreds(prev=>{
+      updated={...prev,[name]:{...(prev[name]||{}),[matchId]:pred}};
+      return updated;
+    });
+    await Storage.set("wc26_preds",JSON.stringify(updated),true);
+  },[]);
+
+  // Bin ID de JSONBin (lectura pública, sin necesidad de clave).
+  const JSONBIN_BIN_ID="6a33aff5da38895dfed5df51";
+  const JSONBIN_READ_URL=`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`;
+
+  const fetchScores=async(silent)=>{
+    if(fetchingRef.current) return;
+    fetchingRef.current=true;
+    setFetching(true);
+    if(!silent) setMsg("Buscando marcadores...");
+    try{
+      const res=await fetch(JSONBIN_READ_URL);
+      if(!res.ok){
+        if(!silent) setMsg(`❌ Error JSONBin: HTTP ${res.status}`);
+      } else {
+        const data=await res.json();
+        const ns=data.record||data||{};
+        const merged={...fetchedScoresRef.current,...ns};
+        fetchedScoresRef.current=merged;
+        setFetchedScores(merged);
+        await Storage.set("wc26_scores",JSON.stringify(merged),false);
+        if(!silent) setMsg(`✅ Marcadores actualizados`);
+      }
+    }catch(e){if(!silent)setMsg(`❌ Error de conexión: ${e.message}`);}
+    fetchingRef.current=false;
+    setFetching(false);
+    setTimeout(()=>setMsg(""),8000);
+  };
+
+  // Auto-actualización mientras la app esté abierta: como ahora la fuente es
+  // gratuita (JSONBin, sin coste por consulta), revisamos cada 90 segundos
+  // sin restricciones de horario de partidos.
+  const fetchScoresRef=useRef(fetchScores);
+  fetchScoresRef.current=fetchScores;
+
+  useEffect(()=>{
+    const checkAndFetch=()=>fetchScoresRef.current(true);
+    const initial=setTimeout(checkAndFetch,5000);
+    const interval=setInterval(checkAndFetch,90*1000);
+    return ()=>{clearTimeout(initial);clearInterval(interval);};
+  },[]);
+
+  const eff=ALL_MATCHES.map(m=>{
+    const s=fetchedScores[m.id];
+    const st=s?.st??m.st;
+    const kickoffPassed=m.known&&now>=m.kickoffMs;
+    const editable=st==="Programado"&&!kickoffPassed;
+    const effSt=st==="Finalizado"?"Finalizado":st==="En vivo"?"En vivo":(kickoffPassed?"Cerrado":st);
+    return{...m,s1:s?.s1??m.s1,s2:s?.s2??m.s2,st,effSt,editable};
+  });
+
+  const liveCount=eff.filter(m=>m.effSt==="En vivo"||m.effSt==="Cerrado").length;
+
+  if(loading) return(
+    <div className="flex h-screen items-center justify-center bg-gray-50">
+      <div className="text-center text-gray-400">
+        <p className="text-5xl mb-3 animate-bounce">⚽</p>
+        <p className="font-medium">Cargando porra...</p>
+      </div>
+    </div>
+  );
+
+  const TABS=[
+    {id:"ranking",icon:"🏆",label:"Ranking"},
+    {id:"partidos",icon:"📅",label:"Partidos"},
+    {id:"envivo",icon:"⚡",label:"En Vivo"},
+    {id:"pronosticos",icon:"🎯",label:"Apostar"},
+  ];
+
+  return(
+    <div className="min-h-screen bg-gray-50" style={{maxWidth:"520px",margin:"0 auto"}}>
+      <div className="bg-gray-900 px-4 py-3 sticky top-0 z-20 shadow-lg">
+        <div className="flex justify-between items-center">
+          <div>
+            <p className="text-white font-black text-lg leading-tight">⚽ Porra Mundial 2026</p>
+            <p className="text-gray-400 text-xs">23 participantes · 104 partidos · 🔄 auto-actualización gratuita</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={()=>setShowRules(!showRules)}
+              className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2.5 py-1.5 rounded-lg font-medium transition-colors">
+              📋 Reglas
+            </button>
+            <button onClick={()=>fetchScores(false)} disabled={fetching}
+              className="text-xs bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-40 flex items-center gap-1">
+              <span className={fetching?"animate-spin inline-block":""}>🔄</span>
+              <span>{fetching?"...":"Actualizar"}</span>
+            </button>
+          </div>
+        </div>
+        {liveCount>0&&(
+          <div className="mt-2 flex items-center gap-1.5 bg-red-900/40 rounded-lg px-2 py-1">
+            <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse inline-block"></span>
+            <span className="text-xs text-red-300 font-semibold">{liveCount} partido{liveCount>1?"s":""} en vivo ahora</span>
+          </div>
+        )}
+      </div>
+
+      {msg&&(
+        <div className={`text-xs px-4 py-2 text-center font-medium border-b ${msg.startsWith("✅")?"bg-emerald-50 text-emerald-700 border-emerald-100":"bg-amber-50 text-amber-700 border-amber-100"}`}>
+          {msg}
+        </div>
+      )}
+
+      <div className="bg-white border-b border-gray-200 sticky top-[58px] z-10">
+        <div className="flex">
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>{setShowRules(false);setTab(t.id);}}
+              className={`flex-1 py-2.5 flex flex-col items-center gap-0.5 transition-colors text-xs font-semibold border-b-2
+                ${tab===t.id&&!showRules?"border-blue-600 text-blue-700":"border-transparent text-gray-400 hover:text-gray-600"}`}>
+              <span className="text-lg leading-none">{t.icon}</span>
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="pb-8">
+        {showRules&&<Reglas/>}
+        {!showRules&&tab==="ranking"&&<Clasificacion preds={preds} matches={eff}/>}
+        {!showRules&&tab==="partidos"&&<Partidos matches={eff}/>}
+        {!showRules&&tab==="envivo"&&<EnVivo matches={eff}/>}
+        {!showRules&&tab==="pronosticos"&&<Pronosticos preds={preds} matches={eff} onSave={savePred}/>}
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
