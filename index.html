@@ -343,18 +343,9 @@ function PredInput({matchId,userName,pred,onSave,locked}){
 }
 
 function GridPronosticos({preds,matches}){
-  const groups=[...new Set(matches.filter(m=>m.rnd==="Fase de Grupos").map(m=>m.grp||""))].filter(Boolean).sort();
-  const knockoutRounds=[...new Set(matches.filter(m=>m.rnd!=="Fase de Grupos").map(m=>m.rnd))];
-  const allSections=["Todos","Fase de Grupos",...groups,...knockoutRounds];
-  const [section,setSection]=useState("Fase de Grupos");
   const [search,setSearch]=useState("");
 
-  const visibleMatches=matches.filter(m=>{
-    if(section==="Todos") return true;
-    if(section==="Fase de Grupos") return m.rnd==="Fase de Grupos";
-    if(groups.includes(section)) return m.grp===section;
-    return m.rnd===section;
-  });
+  const visibleMatches=matches;
 
   const NAMES=Object.keys(preds).sort();
   const filteredNames=search.trim()===""?NAMES:NAMES.filter(n=>n.toLowerCase().includes(search.toLowerCase()));
@@ -380,20 +371,8 @@ function GridPronosticos({preds,matches}){
 
   return(
     <div className="pb-8">
-      {/* Section filter */}
-      <div className="px-3 pt-3 pb-2">
-        <div className="flex gap-1.5 overflow-x-auto pb-1" style={{scrollbarWidth:"none"}}>
-          {allSections.map(s=>(
-            <button key={s} onClick={()=>setSection(s)}
-              className={`flex-shrink-0 text-xs px-2.5 py-1 rounded-full font-semibold transition-colors ${section===s?"bg-blue-600 text-white":"bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-              {s==="Fase de Grupos"?"Grupos":s}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* Search */}
-      <div className="px-3 pb-2">
+      <div className="px-3 pt-3 pb-2">
         <input value={search} onChange={e=>setSearch(e.target.value)}
           placeholder="Buscar participante..."
           className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
