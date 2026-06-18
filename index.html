@@ -15,7 +15,7 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" data-type="module">
+<script type="text/plain" id="app-source">
 const {useState, useEffect, useCallback, useRef} = React;
 
 // =====================================================================
@@ -905,6 +905,20 @@ function App(){
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
+</script>
+<script>
+  // Transformamos manualmente el JSX anterior, forzando el runtime "classic"
+  // (usa React.createElement con el React global), ya que React aquí se
+  // carga como variable global y no como módulo ES — el runtime "automatic"
+  // por defecto de Babel intentaría importar "react/jsx-runtime", que no
+  // existe en este contexto sin un bundler.
+  const src = document.getElementById('app-source').textContent;
+  const { code } = Babel.transform(src, {
+    presets: [["react", { runtime: "classic" }]]
+  });
+  const script = document.createElement('script');
+  script.textContent = code;
+  document.body.appendChild(script);
 </script>
 </body>
 </html>
