@@ -8,6 +8,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
   body{margin:0;background:#f9fafb;}
   ::-webkit-scrollbar{display:none;}
@@ -77,6 +78,34 @@ const Storage = {
     return null;
   }
 };
+
+// =====================================================================
+// NOTIFICACIONES POR CORREO — envía un email cada vez que alguien guarda
+// (o corrige) un pronóstico, usando EmailJS (sin backend, gratis).
+// ⚠️ PASO PENDIENTE (ver SETUP_EMAILJS.md): sustituye estos tres valores
+// por los tuyos. Hasta entonces, esto simplemente no hace nada (no rompe
+// el guardado de pronósticos, que sigue funcionando igual).
+const EMAILJS_PUBLIC_KEY = "zq06F9XUkLrp_nbva";
+const EMAILJS_SERVICE_ID = "service_qxk10pd";
+const EMAILJS_TEMPLATE_ID = "template_bcg4gv5";
+
+if(EMAILJS_PUBLIC_KEY!=="YOUR_PUBLIC_KEY" && typeof emailjs!=="undefined"){
+  emailjs.init({publicKey: EMAILJS_PUBLIC_KEY});
+}
+
+function notifyPredictionSaved(participantName, matchName, predictedScore){
+  if(EMAILJS_PUBLIC_KEY==="YOUR_PUBLIC_KEY") return; // todavía no configurado
+  try{
+    emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      participant_name: participantName,
+      match_name: matchName,
+      predicted_score: predictedScore,
+    }).then(
+      ()=>console.log("[EmailJS] notificación enviada correctamente"),
+      (err)=>console.error("[EmailJS] fallo al enviar:", err)
+    );
+  }catch(e){console.error("[EmailJS] excepción:", e);}
+}
 
 const PARTICIPANTS = [
   "Alberto","Alejandro","Camila","Carlos Mauricio Muñoz","Chano",
@@ -238,10 +267,6 @@ const KNOCKOUT_MATCHES = [
   kickoffMs:kickoffFromISO(iso,time)
 }));
 
-// Predicciones históricas importadas desde Excel (partidos 1-28, actualizado 18/06/2026).
-// Las celdas vacías del Excel significan que esa persona no envió pronóstico ese partido.
-const SEED_PREDICTIONS = {"Alberto": {"1": {"a": 0, "b": 0}, "2": {"a": 1, "b": 0}, "3": {"a": 0, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 0}, "7": {"a": 0, "b": 4}, "8": {"a": 0, "b": 1}, "9": {"a": 5, "b": 0}, "10": {"a": 2, "b": 0}, "11": {"a": 0, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 5, "b": 0}, "14": {"a": 3, "b": 1}, "17": {"a": 3, "b": 0}, "18": {"a": 0, "b": 5}, "19": {"a": 1, "b": 0}, "20": {"a": 1, "b": 0}, "21": {"a": 4, "b": 0}, "22": {"a": 2, "b": 0}, "23": {"a": 3, "b": 0}, "24": {"a": 0, "b": 5}, "25": {"a": 2, "b": 0}, "26": {"a": 0, "b": 1}}, "Alejandro": {"1": {"a": 3, "b": 1}, "2": {"a": 2, "b": 1}, "3": {"a": 3, "b": 0}, "4": {"a": 2, "b": 2}, "5": {"a": 0, "b": 3}, "6": {"a": 1, "b": 2}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 2}, "9": {"a": 4, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 0, "b": 3}, "12": {"a": 1, "b": 1}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 1}, "17": {"a": 3, "b": 1}, "18": {"a": 0, "b": 3}, "19": {"a": 2, "b": 0}, "20": {"a": 2, "b": 0}, "22": {"a": 1, "b": 2}, "23": {"a": 1, "b": 1}, "24": {"a": 0, "b": 3}, "25": {"a": 2, "b": 0}, "26": {"a": 2, "b": 0}}, "Camila": {"1": {"a": 1, "b": 0}, "2": {"a": 2, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 3, "b": 1}, "7": {"a": 0, "b": 3}, "8": {"a": 1, "b": 1}, "9": {"a": 4, "b": 0}, "10": {"a": 1, "b": 0}, "11": {"a": 1, "b": 1}, "12": {"a": 1, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 0}, "15": {"a": 0, "b": 1}, "16": {"a": 1, "b": 0}, "17": {"a": 3, "b": 1}, "18": {"a": 1, "b": 1}, "19": {"a": 2, "b": 1}, "20": {"a": 1, "b": 0}, "21": {"a": 2, "b": 0}, "22": {"a": 2, "b": 2}, "23": {"a": 1, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 1, "b": 0}, "26": {"a": 2, "b": 1}}, "Carlos Mauricio Muñoz": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 1}, "3": {"a": 2, "b": 1}, "4": {"a": 2, "b": 0}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 1, "b": 1}, "8": {"a": 1, "b": 1}, "9": {"a": 3, "b": 1}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 1}, "14": {"a": 2, "b": 0}, "15": {"a": 1, "b": 2}, "16": {"a": 1, "b": 0}, "17": {"a": 3, "b": 1}, "18": {"a": 0, "b": 2}, "19": {"a": 2, "b": 1}, "20": {"a": 1, "b": 0}, "21": {"a": 2, "b": 0}, "22": {"a": 2, "b": 0}, "23": {"a": 2, "b": 0}, "24": {"a": 1, "b": 2}, "25": {"a": 1, "b": 2}, "26": {"a": 1, "b": 0}}, "Chano": {"1": {"a": 2, "b": 1}, "2": {"a": 1, "b": 2}, "3": {"a": 1, "b": 1}, "4": {"a": 3, "b": 1}, "5": {"a": 0, "b": 1}, "6": {"a": 2, "b": 2}, "7": {"a": 0, "b": 2}, "8": {"a": 1, "b": 1}, "9": {"a": 4, "b": 0}, "10": {"a": 2, "b": 2}, "11": {"a": 1, "b": 1}, "12": {"a": 2, "b": 1}, "13": {"a": 3, "b": 1}, "14": {"a": 2, "b": 2}, "15": {"a": 1, "b": 3}, "16": {"a": 1, "b": 0}, "17": {"a": 3, "b": 2}, "18": {"a": 0, "b": 2}, "19": {"a": 3, "b": 0}, "20": {"a": 1, "b": 1}, "21": {"a": 4, "b": 1}, "22": {"a": 2, "b": 2}, "23": {"a": 2, "b": 1}, "24": {"a": 1, "b": 2}, "25": {"a": 3, "b": 1}, "26": {"a": 2, "b": 2}, "27": {"a": 1, "b": 1}, "28": {"a": 1, "b": 2}}, "Daniela Rizo": {"1": {"a": 2, "b": 1}, "2": {"a": 2, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 3, "b": 1}, "5": {"a": 0, "b": 3}, "6": {"a": 3, "b": 1}, "7": {"a": 0, "b": 3}, "8": {"a": 1, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 3, "b": 1}, "11": {"a": 1, "b": 2}, "12": {"a": 1, "b": 0}, "13": {"a": 2, "b": 1}, "14": {"a": 1, "b": 1}, "15": {"a": 1, "b": 2}, "16": {"a": 1, "b": 1}, "17": {"a": 2, "b": 1}, "18": {"a": 0, "b": 1}, "19": {"a": 2, "b": 0}, "20": {"a": 1, "b": 1}, "21": {"a": 3, "b": 1}, "22": {"a": 2, "b": 1}, "23": {"a": 2, "b": 1}, "24": {"a": 1, "b": 2}, "25": {"a": 1, "b": 2}, "26": {"a": 2, "b": 1}}, "David": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 0}, "7": {"a": 1, "b": 2}, "8": {"a": 1, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 0}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 0}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 0}, "17": {"a": 2, "b": 0}, "18": {"a": 0, "b": 2}, "19": {"a": 3, "b": 0}, "20": {"a": 2, "b": 0}, "21": {"a": 3, "b": 0}, "22": {"a": 1, "b": 1}, "23": {"a": 1, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 1, "b": 0}, "26": {"a": 2, "b": 1}}, "Ernesto Trujillo Roble": {"1": {"a": 1, "b": 2}, "2": {"a": 0, "b": 2}, "3": {"a": 0, "b": 2}, "4": {"a": 1, "b": 2}, "5": {"a": 0, "b": 1}, "6": {"a": 3, "b": 1}, "7": {"a": 0, "b": 3}, "8": {"a": 1, "b": 1}, "9": {"a": 5, "b": 0}, "10": {"a": 3, "b": 2}, "11": {"a": 2, "b": 1}, "12": {"a": 1, "b": 1}, "13": {"a": 4, "b": 0}, "14": {"a": 3, "b": 1}, "19": {"a": 3, "b": 1}, "20": {"a": 2, "b": 0}, "22": {"a": 2, "b": 0}}, "Fabiola Ramirez": {"1": {"a": 2, "b": 2}, "2": {"a": 1, "b": 0}, "3": {"a": 1, "b": 2}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 1}, "12": {"a": 1, "b": 0}, "13": {"a": 2, "b": 1}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 1}, "16": {"a": 1, "b": 1}, "17": {"a": 1, "b": 0}, "18": {"a": 1, "b": 2}, "19": {"a": 2, "b": 1}, "20": {"a": 1, "b": 0}, "21": {"a": 2, "b": 1}, "22": {"a": 2, "b": 1}, "23": {"a": 2, "b": 1}, "24": {"a": 1, "b": 1}, "25": {"a": 2, "b": 1}, "26": {"a": 3, "b": 2}, "27": {"a": 1, "b": 2}, "28": {"a": 2, "b": 2}}, "Fernando Rojas-Vizcaya": {"1": {"a": 1, "b": 1}, "2": {"a": 1, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 2}, "8": {"a": 1, "b": 1}, "9": {"a": 4, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "18": {"a": 0, "b": 3}, "19": {"a": 2, "b": 0}, "20": {"a": 2, "b": 1}, "21": {"a": 3, "b": 1}, "22": {"a": 2, "b": 1}, "23": {"a": 2, "b": 1}, "24": {"a": 1, "b": 2}, "25": {"a": 1, "b": 2}, "26": {"a": 2, "b": 1}}, "Gabriel Rojas": {"1": {"a": 2, "b": 1}, "2": {"a": 1, "b": 1}, "3": {"a": 0, "b": 0}, "4": {"a": 1, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 1, "b": 2}, "7": {"a": 0, "b": 3}, "8": {"a": 0, "b": 1}, "9": {"a": 4, "b": 0}, "10": {"a": 1, "b": 1}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 1, "b": 1}, "15": {"a": 0, "b": 2}, "16": {"a": 2, "b": 1}, "17": {"a": 2, "b": 1}, "18": {"a": 0, "b": 2}, "19": {"a": 1, "b": 1}, "20": {"a": 2, "b": 1}, "21": {"a": 3, "b": 1}, "22": {"a": 2, "b": 2}, "23": {"a": 3, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 1, "b": 1}, "26": {"a": 2, "b": 2}}, "José María Solís": {"1": {"a": 2, "b": 0}, "2": {"a": 2, "b": 1}, "3": {"a": 1, "b": 1}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 2}, "7": {"a": 0, "b": 2}, "8": {"a": 1, "b": 2}, "9": {"a": 4, "b": 0}, "10": {"a": 2, "b": 2}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 0}, "15": {"a": 1, "b": 3}, "16": {"a": 2, "b": 0}, "17": {"a": 3, "b": 0}, "18": {"a": 0, "b": 2}, "19": {"a": 2, "b": 1}, "20": {"a": 3, "b": 0}, "21": {"a": 4, "b": 0}, "22": {"a": 2, "b": 1}, "23": {"a": 1, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 2, "b": 1}, "26": {"a": 1, "b": 0}}, "Manuela Plazas": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 0}, "3": {"a": 2, "b": 2}, "4": {"a": 2, "b": 2}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 1}, "8": {"a": 1, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 3}, "11": {"a": 1, "b": 2}, "12": {"a": 1, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 2}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 1}, "17": {"a": 2, "b": 1}, "18": {"a": 0, "b": 3}, "19": {"a": 3, "b": 1}, "20": {"a": 1, "b": 0}, "21": {"a": 3, "b": 0}, "22": {"a": 2, "b": 2}, "23": {"a": 2, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 2, "b": 0}, "26": {"a": 0, "b": 1}}, "María Luisa": {"1": {"a": 0, "b": 1}, "2": {"a": 1, "b": 0}, "3": {"a": 0, "b": 2}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 1}, "9": {"a": 4, "b": 0}, "10": {"a": 1, "b": 1}, "11": {"a": 1, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 0}, "17": {"a": 2, "b": 2}, "18": {"a": 0, "b": 2}, "19": {"a": 3, "b": 1}, "20": {"a": 3, "b": 1}, "21": {"a": 4, "b": 0}, "22": {"a": 2, "b": 1}, "23": {"a": 2, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 1, "b": 2}, "26": {"a": 2, "b": 1}}, "Martin Torres": {"1": {"a": 3, "b": 0}, "2": {"a": 2, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 3}, "6": {"a": 3, "b": 0}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 2}, "9": {"a": 5, "b": 0}, "10": {"a": 2, "b": 0}, "11": {"a": 2, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 3}, "16": {"a": 2, "b": 1}, "17": {"a": 3, "b": 1}, "18": {"a": 0, "b": 3}, "19": {"a": 3, "b": 1}, "20": {"a": 2, "b": 1}, "21": {"a": 3, "b": 2}, "22": {"a": 2, "b": 1}, "23": {"a": 3, "b": 0}, "24": {"a": 0, "b": 3}, "25": {"a": 2, "b": 0}, "26": {"a": 2, "b": 1}}, "Monika De Rojas Jaramillo": {"1": {"a": 2, "b": 1}, "2": {"a": 2, "b": 1}, "3": {"a": 1, "b": 0}, "4": {"a": 1, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 0}, "7": {"a": 0, "b": 1}, "8": {"a": 1, "b": 0}, "9": {"a": 2, "b": 0}, "10": {"a": 1, "b": 2}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 1}, "13": {"a": 3, "b": 0}, "14": {"a": 1, "b": 0}, "15": {"a": 1, "b": 2}, "16": {"a": 0, "b": 0}, "17": {"a": 3, "b": 1}, "18": {"a": 0, "b": 2}, "19": {"a": 3, "b": 0}, "20": {"a": 3, "b": 0}, "21": {"a": 2, "b": 0}, "22": {"a": 2, "b": 1}, "23": {"a": 2, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 1, "b": 2}, "26": {"a": 1, "b": 1}}, "Nancho": {"1": {"a": 2, "b": 1}, "2": {"a": 2, "b": 1}, "3": {"a": 2, "b": 1}, "4": {"a": 1, "b": 1}, "5": {"a": 0, "b": 0}, "6": {"a": 2, "b": 0}, "7": {"a": 0, "b": 1}, "8": {"a": 0, "b": 0}, "9": {"a": 3, "b": 0}, "10": {"a": 1, "b": 0}, "11": {"a": 0, "b": 2}, "12": {"a": 1, "b": 1}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 1}, "17": {"a": 2, "b": 0}, "18": {"a": 0, "b": 3}, "19": {"a": 4, "b": 0}, "20": {"a": 2, "b": 0}, "21": {"a": 4, "b": 0}, "22": {"a": 3, "b": 1}, "23": {"a": 0, "b": 1}, "24": {"a": 0, "b": 2}, "25": {"a": 0, "b": 2}, "26": {"a": 3, "b": 2}}, "Nik": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 1}, "3": {"a": 2, "b": 1}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 1, "b": 2}, "8": {"a": 0, "b": 1}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 1}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 0, "b": 2}, "16": {"a": 1, "b": 0}, "17": {"a": 3, "b": 0}, "18": {"a": 0, "b": 2}, "19": {"a": 1, "b": 0}, "20": {"a": 2, "b": 1}, "21": {"a": 3, "b": 0}, "22": {"a": 2, "b": 2}, "23": {"a": 1, "b": 2}, "24": {"a": 0, "b": 2}, "25": {"a": 2, "b": 0}, "26": {"a": 2, "b": 1}, "27": {"a": 2, "b": 0}, "28": {"a": 1, "b": 1}}, "Rafael Uribe": {"1": {"a": 2, "b": 0}, "2": {"a": 3, "b": 0}, "3": {"a": 2, "b": 0}, "5": {"a": 2, "b": 0}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 1}, "8": {"a": 0, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 1, "b": 2}, "11": {"a": 0, "b": 0}, "12": {"a": 1, "b": 1}, "13": {"a": 1, "b": 0}, "14": {"a": 1, "b": 2}, "15": {"a": 1, "b": 2}, "16": {"a": 0, "b": 1}, "17": {"a": 3, "b": 1}, "18": {"a": 0, "b": 1}, "19": {"a": 2, "b": 0}, "20": {"a": 1, "b": 0}, "21": {"a": 3, "b": 1}, "22": {"a": 1, "b": 1}, "23": {"a": 2, "b": 0}, "24": {"a": 1, "b": 2}, "25": {"a": 0, "b": 0}, "26": {"a": 1, "b": 1}}, "Ricardo Plazas": {"1": {"a": 1, "b": 0}, "2": {"a": 1, "b": 1}, "3": {"a": 0, "b": 1}, "4": {"a": 2, "b": 2}, "5": {"a": 0, "b": 3}, "6": {"a": 2, "b": 2}, "7": {"a": 0, "b": 3}, "8": {"a": 1, "b": 2}, "9": {"a": 5, "b": 0}, "10": {"a": 3, "b": 1}, "11": {"a": 1, "b": 2}, "12": {"a": 2, "b": 0}, "13": {"a": 2, "b": 0}, "14": {"a": 1, "b": 1}, "15": {"a": 1, "b": 1}, "16": {"a": 2, "b": 1}, "17": {"a": 2, "b": 1}, "18": {"a": 1, "b": 1}, "19": {"a": 1, "b": 1}, "20": {"a": 2, "b": 2}, "21": {"a": 3, "b": 0}, "22": {"a": 1, "b": 1}, "23": {"a": 2, "b": 0}, "24": {"a": 1, "b": 2}, "25": {"a": 2, "b": 0}, "26": {"a": 2, "b": 2}, "27": {"a": 1, "b": 1}, "28": {"a": 1, "b": 2}}, "Santy": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 1}, "3": {"a": 2, "b": 1}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 3, "b": 1}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 0}, "14": {"a": 2, "b": 1}, "15": {"a": 1, "b": 1}, "16": {"a": 1, "b": 0}, "17": {"a": 2, "b": 1}, "18": {"a": 1, "b": 2}, "19": {"a": 2, "b": 0}, "20": {"a": 2, "b": 0}, "21": {"a": 3, "b": 0}, "22": {"a": 1, "b": 1}, "23": {"a": 3, "b": 1}, "24": {"a": 1, "b": 2}, "25": {"a": 1, "b": 1}, "26": {"a": 2, "b": 0}}, "Sergio Fuentes": {"1": {"a": 2, "b": 0}, "2": {"a": 1, "b": 2}, "3": {"a": 2, "b": 1}, "4": {"a": 2, "b": 1}, "5": {"a": 0, "b": 2}, "6": {"a": 2, "b": 1}, "7": {"a": 0, "b": 1}, "8": {"a": 1, "b": 2}, "9": {"a": 3, "b": 0}, "10": {"a": 2, "b": 1}, "11": {"a": 1, "b": 1}, "12": {"a": 2, "b": 0}, "13": {"a": 3, "b": 1}, "14": {"a": 2, "b": 1}, "18": {"a": 0, "b": 2}, "19": {"a": 3, "b": 1}, "20": {"a": 1, "b": 1}, "21": {"a": 3, "b": 1}, "22": {"a": 2, "b": 2}, "23": {"a": 2, "b": 1}, "24": {"a": 1, "b": 3}, "25": {"a": 1, "b": 2}, "26": {"a": 2, "b": 0}, "27": {"a": 2, "b": 0}, "28": {"a": 2, "b": 1}}, "Sergio Rojas": {"1": {"a": 2, "b": 0}, "2": {"a": 0, "b": 2}, "3": {"a": 1, "b": 2}, "4": {"a": 1, "b": 0}, "5": {"a": 0, "b": 2}, "6": {"a": 1, "b": 1}, "7": {"a": 0, "b": 2}, "8": {"a": 0, "b": 2}, "9": {"a": 5, "b": 0}, "10": {"a": 0, "b": 0}, "11": {"a": 1, "b": 1}, "12": {"a": 3, "b": 1}, "13": {"a": 2, "b": 0}, "14": {"a": 2, "b": 0}, "18": {"a": 0, "b": 3}, "19": {"a": 2, "b": 1}, "20": {"a": 3, "b": 0}, "21": {"a": 2, "b": 1}, "22": {"a": 1, "b": 1}, "23": {"a": 3, "b": 0}, "24": {"a": 0, "b": 2}, "25": {"a": 2, "b": 1}, "26": {"a": 1, "b": 2}}}
-const SEED_VERSION = "2026-06-18-v2-28matches";
 
 const ALL_MATCHES = [...GROUP_MATCHES, ...KNOCKOUT_MATCHES];
 
@@ -865,58 +890,45 @@ function App(){
 
   useEffect(()=>{
     (async()=>{
+      // La importación inicial desde Excel ya se hizo una vez (manualmente,
+      // directamente en JSONBin). A partir de ahora la app SOLO lee lo que
+      // haya en JSONBin — nunca vuelve a sobrescribirlo on load, así que
+      // ninguna futura actualización del código puede tocar los pronósticos
+      // ya guardados, pase lo que pase.
       let current={};
       try{const r=await Storage.get("wc26_preds",true);if(r)current=JSON.parse(r.value);}catch(e){}
-
-      // Importación de predicciones históricas (Excel). Usamos un número de
-      // versión: si la versión guardada es distinta a la actual, esta nueva
-      // tanda de datos del Excel se considera autoritativa y SOBRESCRIBE
-      // (solo los partidos incluidos en este Excel); el resto de partidos no
-      // tocados por el Excel, y cualquier futura predicción que alguien
-      // introduzca a mano vía PIN, quedan intactos. Una vez aplicada, no se
-      // repite hasta la próxima actualización de SEED_VERSION.
-      let storedVersion=null;
-      try{const r=await Storage.get("wc26_seed_version",true);if(r)storedVersion=JSON.parse(r.value);}catch(e){}
-
-      let changed=false;
-      const merged={...current};
-      if(storedVersion!==SEED_VERSION){
-        for(const name of Object.keys(SEED_PREDICTIONS)){
-          const seedPreds=SEED_PREDICTIONS[name];
-          const existing=merged[name]?{...merged[name]}:{};
-          for(const matchIdStr of Object.keys(seedPreds)){
-            const matchId=parseInt(matchIdStr,10);
-            existing[matchId]=seedPreds[matchIdStr];
-          }
-          merged[name]=existing;
-        }
-        changed=true;
-      }
-      setPreds(merged);
-      if(changed){
-        try{await Storage.set("wc26_preds",JSON.stringify(merged),true);}catch(e){}
-        try{await Storage.set("wc26_seed_version",JSON.stringify(SEED_VERSION),true);}catch(e){}
-      }
+      setPreds(current);
 
       try{const r=await Storage.get("wc26_scores",false);if(r)setFetchedScores(JSON.parse(r.value));}catch(e){}
       setLoading(false);
     })();
   },[]);
 
-  const savePred=useCallback(async(name,matchId,pred)=>{
-    // Importante: pedimos los datos más recientes justo antes de guardar
-    // (en vez de usar lo que ya tengamos en memoria, que puede estar
-    // desactualizado si otra persona guardó algo mientras tanto). Así
-    // evitamos que dos personas guardando casi a la vez se borren
-    // mutuamente sus pronósticos.
-    let fresh=preds;
-    try{
-      const r=await Storage.get("wc26_preds",true);
-      if(r) fresh=JSON.parse(r.value);
-    }catch(e){/* si falla, seguimos con lo que tengamos en memoria */}
-    const updated={...fresh,[name]:{...(fresh[name]||{}),[matchId]:pred}};
-    await Storage.set("wc26_preds",JSON.stringify(updated),true);
-    setPreds(updated);
+  // Cola de guardado: aunque alguien guarde varios pronósticos muy rápido
+  // (por ejemplo, el organizador introduciendo predicciones de varios
+  // participantes uno tras otro), cada guardado espera a que el anterior
+  // termine por completo antes de empezar el suyo. Así dos guardados nunca
+  // se solapan y nunca pueden borrarse el uno al otro, sin importar la
+  // velocidad a la que se pulse "Guardar".
+  const saveQueueRef=useRef(Promise.resolve());
+
+  const savePred=useCallback((name,matchId,pred)=>{
+    const run=async()=>{
+      let fresh=preds;
+      try{
+        const r=await Storage.get("wc26_preds",true);
+        if(r) fresh=JSON.parse(r.value);
+      }catch(e){/* si falla, seguimos con lo que tengamos en memoria */}
+      const updated={...fresh,[name]:{...(fresh[name]||{}),[matchId]:pred}};
+      await Storage.set("wc26_preds",JSON.stringify(updated),true);
+      setPreds(updated);
+
+      const m=ALL_MATCHES.find(mm=>mm.id===matchId);
+      if(m) notifyPredictionSaved(name, `${m.t1} vs ${m.t2}`, `${pred.a} - ${pred.b}`);
+    };
+    const next=saveQueueRef.current.then(run,run);
+    saveQueueRef.current=next.catch(()=>{}); // un fallo no debe bloquear los siguientes guardados
+    return next; // para que quien llamó a savePred siga viendo si ESTE guardado en concreto falló
   },[preds]);
 
   // Bin ID de JSONBin (lectura pública, sin necesidad de clave).
