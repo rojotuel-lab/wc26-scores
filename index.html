@@ -63,7 +63,7 @@ const Storage = {
     record[key] = JSON.parse(value);
     const putRes = await fetch(DATA_WRITE_URL, {
       method:"PUT",
-      headers:{"Content-Type":"application/json","X-Master-Key":DATA_BIN_KEY},
+      headers:{"Content-Type":"application/json","X-Master-Key":DATA_BIN_KEY,"X-Bin-Versioning":"true"},
       body: JSON.stringify(record)
     });
     if(!putRes.ok) throw new Error("HTTP "+putRes.status);
