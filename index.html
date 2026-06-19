@@ -310,34 +310,59 @@ function PtsBadge({pts}){
 function PredInput({matchId,userName,pred,onSave,locked}){
   const [a,setA]=useState(pred?.a!=null?String(pred.a):"");
   const [b,setB]=useState(pred?.b!=null?String(pred.b):"");
+  const [saving,setSaving]=useState(false);
+  const [err,setErr]=useState("");
 
   useEffect(()=>{
     setA(pred?.a!=null?String(pred.a):"");
     setB(pred?.b!=null?String(pred.b):"");
-  },[userName,matchId]);
-
-  const tryCommit=useCallback((va,vb)=>{
-    const na=parseInt(va,10),nb=parseInt(vb,10);
-    if(!isNaN(na)&&!isNaN(nb)&&na>=0&&nb>=0) onSave({a:na,b:nb});
-  },[onSave]);
+    setErr("");
+  },[userName,matchId,pred?.a,pred?.b]);
 
   if(locked){
     if(pred?.a==null) return <span className="text-sm text-gray-300 italic">sin pronóstico</span>;
     return <span className="text-sm font-bold text-gray-600">{pred.a} — {pred.b}</span>;
   }
+
+  const na=parseInt(a,10),nb=parseInt(b,10);
+  const validInput=a!==""&&b!==""&&!isNaN(na)&&!isNaN(nb)&&na>=0&&nb>=0;
+  const matchesSaved=validInput&&pred?.a===na&&pred?.b===nb;
+  const isDirty=validInput&&!matchesSaved;
+
+  const handleClick=async()=>{
+    setSaving(true);setErr("");
+    try{
+      await onSave({a:na,b:nb});
+    }catch(e){
+      setErr("Error, reintenta");
+    }
+    setSaving(false);
+  };
+
   return(
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1.5 flex-wrap">
       <input type="number" min="0" max="25" value={a}
-        onChange={e=>{setA(e.target.value);if(e.target.value!==""&&b!=="")tryCommit(e.target.value,b);}}
-        onBlur={()=>tryCommit(a,b)}
+        onChange={e=>setA(e.target.value)}
         className="w-11 h-9 text-center border-2 border-gray-200 rounded-lg text-sm font-bold focus:border-blue-400 focus:outline-none bg-white"
         placeholder="?"/>
       <span className="text-gray-400 font-bold text-sm">-</span>
       <input type="number" min="0" max="25" value={b}
-        onChange={e=>{setB(e.target.value);if(a!==""&&e.target.value!=="")tryCommit(a,e.target.value);}}
-        onBlur={()=>tryCommit(a,b)}
+        onChange={e=>setB(e.target.value)}
         className="w-11 h-9 text-center border-2 border-gray-200 rounded-lg text-sm font-bold focus:border-blue-400 focus:outline-none bg-white"
         placeholder="?"/>
+      {saving&&<span className="text-xs text-gray-400 font-semibold">Guardando...</span>}
+      {!saving&&isDirty&&(
+        <button onClick={handleClick}
+          className="text-xs font-bold bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 active:bg-blue-800">
+          Guardar
+        </button>
+      )}
+      {!saving&&matchesSaved&&(
+        <span className="text-xs text-emerald-600 font-bold flex items-center gap-0.5">✓ Guardado</span>
+      )}
+      {!saving&&err&&(
+        <button onClick={handleClick} className="text-xs font-bold text-red-600 underline">{err} — Guardar</button>
+      )}
     </div>
   );
 }
@@ -596,7 +621,6 @@ function Pronosticos({preds,matches,onSave}){
   const [pinInput,setPinInput]=useState("");
   const [pinError,setPinError]=useState("");
   const [checking,setChecking]=useState(false);
-  const [savedIds,setSavedIds]=useState({});
   const [saveError,setSaveError]=useState("");
 
   const myPreds=preds[name]||{};
@@ -626,11 +650,10 @@ function Pronosticos({preds,matches,onSave}){
     setSaveError("");
     try{
       await onSave(name,matchId,pred);
-      setSavedIds(s=>({...s,[matchId]:true}));
-      setTimeout(()=>setSavedIds(s=>({...s,[matchId]:false})),1500);
     }catch(e){
       setSaveError(`❌ No se pudo guardar: ${e.message}`);
       setTimeout(()=>setSaveError(""),8000);
+      throw e;
     }
   },[name,onSave]);
 
@@ -733,7 +756,6 @@ function Pronosticos({preds,matches,onSave}){
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-xs text-gray-400">#{m.id} · {m.dateStr} {m.time}h</span>
                     <div className="flex items-center gap-2">
-                      {savedIds[m.id]&&<span className="text-xs text-emerald-600 font-semibold">✓ Guardado</span>}
                       <StatusBadge status={m.effSt}/>
                     </div>
                   </div>
@@ -882,13 +904,20 @@ function App(){
   },[]);
 
   const savePred=useCallback(async(name,matchId,pred)=>{
-    let updated;
-    setPreds(prev=>{
-      updated={...prev,[name]:{...(prev[name]||{}),[matchId]:pred}};
-      return updated;
-    });
+    // Importante: pedimos los datos más recientes justo antes de guardar
+    // (en vez de usar lo que ya tengamos en memoria, que puede estar
+    // desactualizado si otra persona guardó algo mientras tanto). Así
+    // evitamos que dos personas guardando casi a la vez se borren
+    // mutuamente sus pronósticos.
+    let fresh=preds;
+    try{
+      const r=await Storage.get("wc26_preds",true);
+      if(r) fresh=JSON.parse(r.value);
+    }catch(e){/* si falla, seguimos con lo que tengamos en memoria */}
+    const updated={...fresh,[name]:{...(fresh[name]||{}),[matchId]:pred}};
     await Storage.set("wc26_preds",JSON.stringify(updated),true);
-  },[]);
+    setPreds(updated);
+  },[preds]);
 
   // Bin ID de JSONBin (lectura pública, sin necesidad de clave).
   const JSONBIN_BIN_ID="6a33aff5da38895dfed5df51";
