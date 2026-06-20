@@ -36,6 +36,16 @@ const DATA_BIN_KEY = "$2a$10$akz/QRgSqYpcJrT8BC8Yje0kbTXbgHSWm7X.ON6b.jsdCBEDl5D
 const DATA_READ_URL = `https://api.jsonbin.io/v3/b/${DATA_BIN_ID}/latest`;
 const DATA_WRITE_URL = `https://api.jsonbin.io/v3/b/${DATA_BIN_ID}`;
 
+async function fetchWithTimeout(url, options, timeoutMs){
+  const controller=new AbortController();
+  const id=setTimeout(()=>controller.abort(), timeoutMs||10000);
+  try{
+    return await fetch(url, {...(options||{}), signal: controller.signal});
+  }finally{
+    clearTimeout(id);
+  }
+}
+
 const Storage = {
   async get(key, shared){
     if(!shared){
@@ -45,7 +55,7 @@ const Storage = {
       }catch(e){ return null; }
     }
     if(DATA_BIN_ID==="YOUR_PREDICTIONS_BIN_ID") throw new Error("Falta configurar el bin de predicciones (ver SETUP_WEBSITE.md)");
-    const res = await fetch(DATA_READ_URL);
+    const res = await fetchWithTimeout(DATA_READ_URL);
     if(!res.ok) throw new Error("HTTP "+res.status);
     const data = await res.json();
     const record = data.record||{};
@@ -58,11 +68,11 @@ const Storage = {
       return {key, value, shared:false};
     }
     if(DATA_BIN_ID==="YOUR_PREDICTIONS_BIN_ID") throw new Error("Falta configurar el bin de predicciones (ver SETUP_WEBSITE.md)");
-    const res = await fetch(DATA_READ_URL);
+    const res = await fetchWithTimeout(DATA_READ_URL);
     let record = {};
     if(res.ok){ const data = await res.json(); record = data.record||{}; }
     record[key] = JSON.parse(value);
-    const putRes = await fetch(DATA_WRITE_URL, {
+    const putRes = await fetchWithTimeout(DATA_WRITE_URL, {
       method:"PUT",
       headers:{"Content-Type":"application/json","X-Master-Key":DATA_BIN_KEY,"X-Bin-Versioning":"true"},
       body: JSON.stringify(record)
@@ -941,7 +951,14 @@ function App(){
     setFetching(true);
     if(!silent) setMsg("Buscando marcadores...");
     try{
-      const res=await fetch(JSONBIN_READ_URL);
+      const controller=new AbortController();
+      const timeoutId=setTimeout(()=>controller.abort(),10000); // nunca esperamos más de 10s
+      let res;
+      try{
+        res=await fetch(JSONBIN_READ_URL,{signal:controller.signal});
+      }finally{
+        clearTimeout(timeoutId);
+      }
       if(!res.ok){
         if(!silent) setMsg(`❌ Error JSONBin: HTTP ${res.status}`);
       } else {
@@ -953,7 +970,10 @@ function App(){
         await Storage.set("wc26_scores",JSON.stringify(merged),false);
         if(!silent) setMsg(`✅ Marcadores actualizados`);
       }
-    }catch(e){if(!silent)setMsg(`❌ Error de conexión: ${e.message}`);}
+    }catch(e){
+      const msg=e.name==="AbortError" ? "Tiempo de espera agotado" : e.message;
+      if(!silent)setMsg(`❌ Error de conexión: ${msg}`);
+    }
     fetchingRef.current=false;
     setFetching(false);
     setTimeout(()=>setMsg(""),8000);
