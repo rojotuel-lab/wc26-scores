@@ -69,8 +69,9 @@ const Storage = {
     }
     if(DATA_BIN_ID==="YOUR_PREDICTIONS_BIN_ID") throw new Error("Falta configurar el bin de predicciones (ver SETUP_WEBSITE.md)");
     const res = await fetchWithTimeout(DATA_READ_URL);
-    let record = {};
-    if(res.ok){ const data = await res.json(); record = data.record||{}; }
+    if(!res.ok) throw new Error("No se pudo leer el estado actual antes de guardar (HTTP "+res.status+")");
+    const data = await res.json();
+    const record = data.record||{};
     record[key] = JSON.parse(value);
     const putRes = await fetchWithTimeout(DATA_WRITE_URL, {
       method:"PUT",
@@ -924,11 +925,13 @@ function App(){
 
   const savePred=useCallback((name,matchId,pred)=>{
     const run=async()=>{
-      let fresh=preds;
-      try{
-        const r=await Storage.get("wc26_preds",true);
-        if(r) fresh=JSON.parse(r.value);
-      }catch(e){/* si falla, seguimos con lo que tengamos en memoria */}
+      // CRÍTICO: si no podemos confirmar los datos más recientes del
+      // servidor, NUNCA debemos guardar de todos modos — eso es lo que
+      // causó la pérdida de datos anterior (se guardó una copia local
+      // incompleta, borrando a todos los demás participantes). Mejor
+      // fallar visiblemente que borrar silenciosamente el trabajo de todos.
+      const r=await Storage.get("wc26_preds",true); // si falla, lanza error y abortamos aquí
+      const fresh=r?JSON.parse(r.value):{};
       const updated={...fresh,[name]:{...(fresh[name]||{}),[matchId]:pred}};
       await Storage.set("wc26_preds",JSON.stringify(updated),true);
       setPreds(updated);
@@ -939,7 +942,7 @@ function App(){
     const next=saveQueueRef.current.then(run,run);
     saveQueueRef.current=next.catch(()=>{}); // un fallo no debe bloquear los siguientes guardados
     return next; // para que quien llamó a savePred siga viendo si ESTE guardado en concreto falló
-  },[preds]);
+  },[]);
 
   // Bin ID de JSONBin (lectura pública, sin necesidad de clave).
   const JSONBIN_BIN_ID="6a33aff5da38895dfed5df51";
