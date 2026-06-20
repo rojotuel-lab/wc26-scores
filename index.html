@@ -19,6 +19,10 @@
 <script type="text/plain" id="app-source">
 const {useState, useEffect, useCallback, useRef} = React;
 
+// Versión de esta build — increméntala cada vez que subas un cambio nuevo.
+// Se usa para detectar pestañas abiertas con código viejo (ver más abajo).
+const APP_VERSION = "2026-06-21.1";
+
 // =====================================================================
 // CAPA DE ALMACENAMIENTO — sustituye al window.storage de Claude.ai.
 // - Datos personales (shared:false) -> localStorage del propio navegador.
@@ -887,10 +891,31 @@ function App(){
   const [msg,setMsg]=useState("");
   const [showRules,setShowRules]=useState(false);
   const [now,setNow]=useState(()=>Date.now());
+  const [staleVersion,setStaleVersion]=useState(false);
 
   useEffect(()=>{
     const t=setInterval(()=>setNow(Date.now()),30000);
     return ()=>clearInterval(t);
+  },[]);
+
+  // Detector de "pestaña desactualizada": una pestaña abierta ANTES de subir
+  // una corrección no sabe que existe — el arreglo solo protege a quien
+  // recarga. Esto comprueba cada minuto si la página realmente publicada
+  // tiene una versión distinta a la que está cargada en esta pestaña, y si
+  // es así, bloquea el guardado y avisa claramente en vez de fallar en
+  // silencio (esto fue exactamente lo que causó la pérdida de datos previa).
+  useEffect(()=>{
+    const check=async()=>{
+      try{
+        const res=await fetch(window.location.href, {cache:"no-store"});
+        if(!res.ok) return;
+        const html=await res.text();
+        const m=html.match(/const APP_VERSION\s*=\s*"([^"]+)"/);
+        if(m && m[1]!==APP_VERSION) setStaleVersion(true);
+      }catch(e){/* si falla la comprobación, no hacemos nada — no bloqueamos por error de red */}
+    };
+    const interval=setInterval(check,60*1000);
+    return ()=>clearInterval(interval);
   },[]);
 
   // Refs "siempre actualizadas" para que el temporizador de auto-actualización
@@ -923,8 +948,19 @@ function App(){
   // velocidad a la que se pulse "Guardar".
   const saveQueueRef=useRef(Promise.resolve());
 
+  const staleVersionRef=useRef(false);
+  staleVersionRef.current=staleVersion;
+
   const savePred=useCallback((name,matchId,pred)=>{
     const run=async()=>{
+      // Si esta pestaña está corriendo una versión vieja del código (alguien
+      // subió una corrección después de que se abriera esta pestaña),
+      // NUNCA debemos guardar — el código viejo no conoce las protecciones
+      // nuevas y podría volver a borrar datos de otros. Mejor bloquear y
+      // pedir que recargue la página.
+      if(staleVersionRef.current){
+        throw new Error("Esta página está desactualizada — recarga (Cmd+Shift+R) antes de guardar");
+      }
       // CRÍTICO: si no podemos confirmar los datos más recientes del
       // servidor, NUNCA debemos guardar de todos modos — eso es lo que
       // causó la pérdida de datos anterior (se guardó una copia local
@@ -1050,6 +1086,14 @@ function App(){
           </div>
         )}
       </div>
+
+      {staleVersion&&(
+        <div className="bg-red-600 text-white text-sm font-bold px-4 py-3 text-center">
+          ⚠️ Esta página está desactualizada. Por favor recarga ahora (Cmd+Shift+R o pulsa el botón abajo) antes de guardar nada.
+          <button onClick={()=>window.location.reload(true)}
+            className="ml-2 underline font-bold">Recargar ahora</button>
+        </div>
+      )}
 
       {msg&&(
         <div className={`text-xs px-4 py-2 text-center font-medium border-b ${msg.startsWith("✅")?"bg-emerald-50 text-emerald-700 border-emerald-100":"bg-amber-50 text-amber-700 border-amber-100"}`}>
