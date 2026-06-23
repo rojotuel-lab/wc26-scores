@@ -1,18 +1,13 @@
 // update-scores.js
 // Fetches FIFA World Cup 2026 group-stage scores from ESPN's free, public
-// (no API key required) scoreboard endpoint, and pushes a clean
-// { matchId: { s1, s2, st } } JSON object to JSONBin so the Porra Mundial
-// React app can read it with a plain, no-cost web request.
+// (no API key required) scoreboard endpoint, and writes a clean
+// { matchId: { s1, s2, st } } JSON file directly into this repo. GitHub
+// Pages serves it automatically as a normal static file — no external
+// storage service, no request quota to ever run out of.
 //
-// Runs entirely free: GitHub Actions (scheduler) + ESPN (data) + JSONBin (storage).
+// Runs entirely free: GitHub Actions (scheduler) + ESPN (data) + GitHub Pages (hosting).
 
-const JSONBIN_BIN_ID = process.env.JSONBIN_BIN_ID;
-const JSONBIN_API_KEY = process.env.JSONBIN_API_KEY;
-
-if (!JSONBIN_BIN_ID || !JSONBIN_API_KEY) {
-  console.error("Missing JSONBIN_BIN_ID or JSONBIN_API_KEY secrets.");
-  process.exit(1);
-}
+const fs = require("fs");
 
 // Our internal group-stage matches: id + each team's FIFA-style 3-letter code,
 // exactly matching the codes used inside the Porra Mundial app.
@@ -119,20 +114,12 @@ async function main() {
   console.log(`Matched ${matched} of ${MATCHES.length} group matches with live/final data.`);
   console.log(JSON.stringify(result));
 
-  const putRes = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Master-Key": JSONBIN_API_KEY,
-    },
-    body: JSON.stringify(result),
-  });
-
-  if (!putRes.ok) {
-    console.error("JSONBin update failed:", putRes.status, await putRes.text());
-    process.exit(1);
-  }
-  console.log("✅ Scores pushed to JSONBin successfully.");
+  // Escribimos el resultado directamente como un archivo en el propio repo
+  // (en vez de mandarlo a JSONBin). GitHub Pages lo sirve automáticamente
+  // como un archivo estático más, sin límite de peticiones tipo "se agotan
+  // para siempre" — a diferencia del plan gratuito de JSONBin.
+  fs.writeFileSync("scores.json", JSON.stringify(result));
+  console.log("✅ scores.json escrito correctamente.");
 }
 
 main().catch(err => {
