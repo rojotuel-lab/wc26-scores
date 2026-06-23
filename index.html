@@ -8,6 +8,8 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
   body{margin:0;background:#f9fafb;}
@@ -21,24 +23,39 @@ const {useState, useEffect, useCallback, useRef} = React;
 
 // Versión de esta build — increméntala cada vez que subas un cambio nuevo.
 // Se usa para detectar pestañas abiertas con código viejo (ver más abajo).
-const APP_VERSION = "2026-06-21.1";
+const APP_VERSION = "2026-06-23.2";
 
 // =====================================================================
-// CAPA DE ALMACENAMIENTO — sustituye al window.storage de Claude.ai.
-// - Datos personales (shared:false) -> localStorage del propio navegador.
-// - Datos compartidos (shared:true) -> un bin de JSONBin (predicciones +
-//   marcador de versión de la semilla). Los marcadores en vivo se leen
-//   directamente del bin público de resultados (ver fetchScores más abajo),
-//   y aquí solo se cachean localmente para una carga inicial instantánea.
-//
-// ⚠️ PASO PENDIENTE (ver SETUP_WEBSITE.md): sustituye estos dos valores
-// por el Bin ID y la X-Master-Key de tu segundo bin de JSONBin (el de
-// predicciones). Hasta entonces, guardar/cargar pronósticos mostrará un
-// aviso claro en pantalla.
-const DATA_BIN_ID = "6a33f7b4f5f4af5e2908e777";
-const DATA_BIN_KEY = "$2a$10$akz/QRgSqYpcJrT8BC8Yje0kbTXbgHSWm7X.ON6b.jsdCBEDl5D6q";
-const DATA_READ_URL = `https://api.jsonbin.io/v3/b/${DATA_BIN_ID}/latest`;
-const DATA_WRITE_URL = `https://api.jsonbin.io/v3/b/${DATA_BIN_ID}`;
+// FIREBASE — guarda los pronósticos. Cada participante tiene su PROPIO
+// documento (colección "predictions", un documento por nombre). Esto
+// significa que el pronóstico de una persona NUNCA puede pisar el de otra,
+// incluso si varias personas guardan en el mismo segundo — a diferencia del
+// modelo anterior (un solo archivo compartido), que fue la causa real de
+// la pérdida de datos que tuvimos con JSONBin.
+const firebaseConfig = {
+  apiKey: "AIzaSyD7NvCEn0plqFyuHmyHqzfVWAZ0_x1sLMw",
+  authDomain: "porra-mundial-2026-de1c7.firebaseapp.com",
+  projectId: "porra-mundial-2026-de1c7",
+  storageBucket: "porra-mundial-2026-de1c7.firebasestorage.app",
+  messagingSenderId: "378321338296",
+  appId: "1:378321338296:web:66d3f30d5ea9186db8d94d"
+};
+let db = null;
+try{
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+}catch(e){ console.error("[Firebase] No se pudo inicializar:", e); }
+
+async function loadAllPredictions(){
+  const snapshot = await db.collection("predictions").get();
+  const result = {};
+  snapshot.forEach(doc => { result[doc.id] = doc.data(); });
+  return result;
+}
+
+async function savePredictionFirestore(name, matchId, pred){
+  await db.collection("predictions").doc(name).set({ [String(matchId)]: pred }, { merge: true });
+}
 
 async function fetchWithTimeout(url, options, timeoutMs){
   const controller=new AbortController();
@@ -50,6 +67,8 @@ async function fetchWithTimeout(url, options, timeoutMs){
   }
 }
 
+// Solo se usa ya para datos personales (localStorage de este navegador) —
+// las predicciones compartidas ahora van directas a Firestore arriba.
 const Storage = {
   async get(key, shared){
     if(!shared){
@@ -58,32 +77,14 @@ const Storage = {
         return v!=null ? {key, value:v, shared:false} : null;
       }catch(e){ return null; }
     }
-    if(DATA_BIN_ID==="YOUR_PREDICTIONS_BIN_ID") throw new Error("Falta configurar el bin de predicciones (ver SETUP_WEBSITE.md)");
-    const res = await fetchWithTimeout(DATA_READ_URL);
-    if(!res.ok) throw new Error("HTTP "+res.status);
-    const data = await res.json();
-    const record = data.record||{};
-    if(!(key in record)) return null;
-    return {key, value: JSON.stringify(record[key]), shared:true};
+    return null;
   },
   async set(key, value, shared){
     if(!shared){
       try{ localStorage.setItem(key, value); }catch(e){}
       return {key, value, shared:false};
     }
-    if(DATA_BIN_ID==="YOUR_PREDICTIONS_BIN_ID") throw new Error("Falta configurar el bin de predicciones (ver SETUP_WEBSITE.md)");
-    const res = await fetchWithTimeout(DATA_READ_URL);
-    if(!res.ok) throw new Error("No se pudo leer el estado actual antes de guardar (HTTP "+res.status+")");
-    const data = await res.json();
-    const record = data.record||{};
-    record[key] = JSON.parse(value);
-    const putRes = await fetchWithTimeout(DATA_WRITE_URL, {
-      method:"PUT",
-      headers:{"Content-Type":"application/json","X-Master-Key":DATA_BIN_KEY,"X-Bin-Versioning":"true"},
-      body: JSON.stringify(record)
-    });
-    if(!putRes.ok) throw new Error("HTTP "+putRes.status);
-    return {key, value, shared:true};
+    return null;
   },
   async delete(key, shared){
     if(!shared){
@@ -926,13 +927,11 @@ function App(){
 
   useEffect(()=>{
     (async()=>{
-      // La importación inicial desde Excel ya se hizo una vez (manualmente,
-      // directamente en JSONBin). A partir de ahora la app SOLO lee lo que
-      // haya en JSONBin — nunca vuelve a sobrescribirlo on load, así que
-      // ninguna futura actualización del código puede tocar los pronósticos
-      // ya guardados, pase lo que pase.
+      // Las predicciones viven en Firestore, un documento por participante.
+      // Esto se lee una vez al cargar; cada guardado posterior actualiza
+      // directamente Firestore (ver savePred más abajo), sin pasar por aquí.
       let current={};
-      try{const r=await Storage.get("wc26_preds",true);if(r)current=JSON.parse(r.value);}catch(e){}
+      try{ current = await loadAllPredictions(); }catch(e){ console.error("[Firestore] Error al cargar predicciones:", e); }
       setPreds(current);
 
       try{const r=await Storage.get("wc26_scores",false);if(r)setFetchedScores(JSON.parse(r.value));}catch(e){}
@@ -940,12 +939,12 @@ function App(){
     })();
   },[]);
 
-  // Cola de guardado: aunque alguien guarde varios pronósticos muy rápido
-  // (por ejemplo, el organizador introduciendo predicciones de varios
-  // participantes uno tras otro), cada guardado espera a que el anterior
-  // termine por completo antes de empezar el suyo. Así dos guardados nunca
-  // se solapan y nunca pueden borrarse el uno al otro, sin importar la
-  // velocidad a la que se pulse "Guardar".
+  // Cola de guardado: aunque alguien guarde varios pronósticos muy rápido,
+  // cada guardado espera a que el anterior termine antes de empezar el
+  // suyo. Con Firestore esto ya no es estrictamente necesario para evitar
+  // pérdida de datos (cada participante tiene su propio documento, así que
+  // dos guardados nunca pueden pisarse entre sí) — se mantiene como una
+  // capa extra de orden, sin coste.
   const saveQueueRef=useRef(Promise.resolve());
 
   const staleVersionRef=useRef(false);
@@ -956,21 +955,12 @@ function App(){
       // Si esta pestaña está corriendo una versión vieja del código (alguien
       // subió una corrección después de que se abriera esta pestaña),
       // NUNCA debemos guardar — el código viejo no conoce las protecciones
-      // nuevas y podría volver a borrar datos de otros. Mejor bloquear y
-      // pedir que recargue la página.
+      // nuevas. Mejor bloquear y pedir que recargue la página.
       if(staleVersionRef.current){
         throw new Error("Esta página está desactualizada — recarga (Cmd+Shift+R) antes de guardar");
       }
-      // CRÍTICO: si no podemos confirmar los datos más recientes del
-      // servidor, NUNCA debemos guardar de todos modos — eso es lo que
-      // causó la pérdida de datos anterior (se guardó una copia local
-      // incompleta, borrando a todos los demás participantes). Mejor
-      // fallar visiblemente que borrar silenciosamente el trabajo de todos.
-      const r=await Storage.get("wc26_preds",true); // si falla, lanza error y abortamos aquí
-      const fresh=r?JSON.parse(r.value):{};
-      const updated={...fresh,[name]:{...(fresh[name]||{}),[matchId]:pred}};
-      await Storage.set("wc26_preds",JSON.stringify(updated),true);
-      setPreds(updated);
+      await savePredictionFirestore(name, matchId, pred);
+      setPreds(prev=>({...prev,[name]:{...(prev[name]||{}),[matchId]:pred}}));
 
       const m=ALL_MATCHES.find(mm=>mm.id===matchId);
       if(m) notifyPredictionSaved(name, `${m.t1} vs ${m.t2}`, `${pred.a} - ${pred.b}`);
@@ -981,8 +971,11 @@ function App(){
   },[]);
 
   // Bin ID de JSONBin (lectura pública, sin necesidad de clave).
-  const JSONBIN_BIN_ID="6a33aff5da38895dfed5df51";
-  const JSONBIN_READ_URL=`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`;
+  // Los marcadores ahora viven directamente en este mismo repo (scores.json),
+  // servidos por GitHub Pages — gratis, sin límite de peticiones de por vida
+  // como tenía JSONBin. El parámetro "?t=" evita que el navegador devuelva
+  // una copia en caché desactualizada.
+  const SCORES_URL = `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, "/")}scores.json`;
 
   const fetchScores=async(silent)=>{
     if(fetchingRef.current) return;
@@ -994,15 +987,14 @@ function App(){
       const timeoutId=setTimeout(()=>controller.abort(),10000); // nunca esperamos más de 10s
       let res;
       try{
-        res=await fetch(JSONBIN_READ_URL,{signal:controller.signal});
+        res=await fetch(`${SCORES_URL}?t=${Date.now()}`,{signal:controller.signal,cache:"no-store"});
       }finally{
         clearTimeout(timeoutId);
       }
       if(!res.ok){
-        if(!silent) setMsg(`❌ Error JSONBin: HTTP ${res.status}`);
+        if(!silent) setMsg(`❌ Error al leer marcadores: HTTP ${res.status}`);
       } else {
-        const data=await res.json();
-        const ns=data.record||data||{};
+        const ns=await res.json();
         const merged={...fetchedScoresRef.current,...ns};
         fetchedScoresRef.current=merged;
         setFetchedScores(merged);
