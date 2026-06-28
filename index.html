@@ -23,7 +23,7 @@ const {useState, useEffect, useCallback, useRef} = React;
 
 // Versión de esta build — increméntala cada vez que subas un cambio nuevo.
 // Se usa para detectar pestañas abiertas con código viejo (ver más abajo).
-const APP_VERSION = "2026-06-28.2";
+const APP_VERSION = "2026-06-28.3";
 
 // =====================================================================
 // FIREBASE — guarda los pronósticos. Cada participante tiene su PROPIO
@@ -1058,12 +1058,21 @@ function App(){
   const eff=ALL_MATCHES.map(m=>{
     const s=fetchedScores[m.id];
     const st=s?.st??m.st;
-    const kickoffPassed=m.known&&now>=m.kickoffMs;
-    const editable=st==="Programado"&&!kickoffPassed;
-    const effSt=st==="Finalizado"?"Finalizado":st==="En vivo"?"En vivo":(kickoffPassed?"Cerrado":st);
     const override=knockoutTeams[m.id];
     const t1=override?.t1??m.t1, c1=override?.c1??m.c1, t2=override?.t2??m.t2, c2=override?.c2??m.c2;
-    return{...m,t1,c1,t2,c2,s1:s?.s1??m.s1,s2:s?.s2??m.s2,st,effSt,editable};
+    // Un partido solo puede "cerrarse" al iniciar si ya sabemos qué equipos
+    // juegan realmente — si todavía muestra un texto provisional ("Por
+    // definir", "1° Grupo X", "Mejor 3°...") nunca se bloquea, sea cual sea
+    // la hora. Esto se recalcula con los nombres YA resueltos (después de
+    // aplicar cualquier override de Firestore), no con el dato estático
+    // original — así una ronda futura se bloquea automáticamente en cuanto
+    // se conocen sus equipos reales, sin tener que tocar código de nuevo.
+    const isResolved = !t1.includes("Por definir") && !t1.includes("°") &&
+                        !t2.includes("Por definir") && !t2.includes("°");
+    const kickoffPassed=isResolved&&now>=m.kickoffMs;
+    const editable=st==="Programado"&&!kickoffPassed;
+    const effSt=st==="Finalizado"?"Finalizado":st==="En vivo"?"En vivo":(kickoffPassed?"Cerrado":st);
+    return{...m,t1,c1,t2,c2,known:isResolved,s1:s?.s1??m.s1,s2:s?.s2??m.s2,st,effSt,editable};
   }).sort((a,b)=>a.kickoffMs-b.kickoffMs);
   // ^ El número de partido (id) solo se usa para identificar el marcador en
   // vivo — el orden en que se MUESTRA en cualquier pestaña siempre es por
