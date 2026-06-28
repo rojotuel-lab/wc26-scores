@@ -23,7 +23,7 @@ const {useState, useEffect, useCallback, useRef} = React;
 
 // Versión de esta build — increméntala cada vez que subas un cambio nuevo.
 // Se usa para detectar pestañas abiertas con código viejo (ver más abajo).
-const APP_VERSION = "2026-06-24.2";
+const APP_VERSION = "2026-06-24.3";
 
 // =====================================================================
 // FIREBASE — guarda los pronósticos. Cada participante tiene su PROPIO
@@ -51,6 +51,13 @@ async function loadAllPredictions(){
   const result = {};
   snapshot.forEach(doc => { result[doc.id] = doc.data(); });
   return result;
+}
+
+// Equipos reales de la fase eliminatoria (ej. "1° Grupo A" -> "México")
+// se van rellenando aquí a medida que se conocen — ver admin_knockout_teams.html.
+async function loadKnockoutOverrides(){
+  const doc = await db.collection("knockout_overrides").doc("teams").get();
+  return doc.exists ? doc.data() : {};
 }
 
 async function savePredictionFirestore(name, matchId, pred){
@@ -937,6 +944,17 @@ function App(){
     })();
   },[]);
 
+  const [knockoutTeams,setKnockoutTeams]=useState({});
+  useEffect(()=>{
+    const checkAndFetch=async()=>{
+      try{ setKnockoutTeams(await loadKnockoutOverrides()); }
+      catch(e){ console.error("[Firestore] Error al cargar equipos de eliminatoria:", e); }
+    };
+    checkAndFetch();
+    const interval=setInterval(checkAndFetch, 30*1000);
+    return ()=>clearInterval(interval);
+  },[]);
+
   // Auto-actualización de predicciones: si alguien deja la pestaña abierta
   // todo el día sin recargar, esto evita que vea datos "congelados" del
   // momento en que cargó la página — se refresca solo cada 30 segundos,
@@ -1041,7 +1059,9 @@ function App(){
     const kickoffPassed=m.known&&now>=m.kickoffMs;
     const editable=st==="Programado"&&!kickoffPassed;
     const effSt=st==="Finalizado"?"Finalizado":st==="En vivo"?"En vivo":(kickoffPassed?"Cerrado":st);
-    return{...m,s1:s?.s1??m.s1,s2:s?.s2??m.s2,st,effSt,editable};
+    const override=knockoutTeams[m.id];
+    const t1=override?.t1??m.t1, c1=override?.c1??m.c1, t2=override?.t2??m.t2, c2=override?.c2??m.c2;
+    return{...m,t1,c1,t2,c2,s1:s?.s1??m.s1,s2:s?.s2??m.s2,st,effSt,editable};
   });
 
   const liveCount=eff.filter(m=>m.effSt==="En vivo"||m.effSt==="Cerrado").length;
