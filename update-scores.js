@@ -36,6 +36,13 @@ const MATCHES = [
   {id:64,c1:"CPV",c2:"KSA"},{id:65,c1:"NZL",c2:"BEL"},{id:66,c1:"EGY",c2:"IRN"},
   {id:67,c1:"PAN",c2:"ENG"},{id:68,c1:"CRO",c2:"GHA"},{id:69,c1:"COL",c2:"POR"},
   {id:70,c1:"COD",c2:"UZB"},{id:71,c1:"JOR",c2:"ARG"},{id:72,c1:"ALG",c2:"AUT"},
+  // Ronda de 32 — equipos reales confirmados (ver SETUP.md)
+  {id:73,c1:"RSA",c2:"CAN"},{id:74,c1:"GER",c2:"PAR"},{id:75,c1:"NED",c2:"MAR"},
+  {id:76,c1:"BRA",c2:"JPN"},{id:77,c1:"FRA",c2:"SWE"},{id:78,c1:"CIV",c2:"NOR"},
+  {id:79,c1:"MEX",c2:"ECU"},{id:80,c1:"ENG",c2:"COD"},{id:81,c1:"USA",c2:"BIH"},
+  {id:82,c1:"BEL",c2:"SEN"},{id:83,c1:"POR",c2:"CRO"},{id:84,c1:"ESP",c2:"AUT"},
+  {id:85,c1:"SUI",c2:"ALG"},{id:86,c1:"ARG",c2:"CPV"},{id:87,c1:"COL",c2:"GHA"},
+  {id:88,c1:"AUS",c2:"EGY"},
 ];
 
 // ESPN sometimes uses a different 3-letter abbreviation than the one we use
