@@ -77,22 +77,22 @@ const TEAM_NAMES = {
 // Ronda de 32. Los lados que dependen de "Mejor 3°" se omiten a propósito
 // — esos se resuelven a mano en admin_knockout_teams.html.
 const SLOTS = {
-  73: { t1:{rank:1,group:"A"}, t2:{rank:2,group:"B"} },
-  74: { t1:{rank:1,group:"C"}, t2:{rank:2,group:"F"} },
-  75: { t1:{rank:1,group:"E"} },
-  76: { t1:{rank:1,group:"F"}, t2:{rank:2,group:"C"} },
-  77: { t1:{rank:2,group:"E"}, t2:{rank:2,group:"I"} },
-  78: { t1:{rank:1,group:"I"} },
+  73: { t1:{rank:2,group:"A"}, t2:{rank:2,group:"B"} },
+  74: { t1:{rank:1,group:"E"} },
+  75: { t1:{rank:1,group:"F"}, t2:{rank:2,group:"C"} },
+  76: { t1:{rank:1,group:"C"}, t2:{rank:2,group:"F"} },
+  77: { t1:{rank:1,group:"I"} },
+  78: { t1:{rank:2,group:"E"}, t2:{rank:2,group:"I"} },
   79: { t1:{rank:1,group:"A"} },
   80: { t1:{rank:1,group:"L"} },
-  81: { t1:{rank:1,group:"G"} },
-  82: { t1:{rank:1,group:"D"} },
-  83: { t1:{rank:1,group:"H"}, t2:{rank:2,group:"J"} },
-  84: { t1:{rank:2,group:"K"}, t2:{rank:2,group:"L"} },
+  81: { t1:{rank:1,group:"D"} },
+  82: { t1:{rank:1,group:"G"} },
+  83: { t1:{rank:2,group:"K"}, t2:{rank:2,group:"L"} },
+  84: { t1:{rank:1,group:"H"}, t2:{rank:2,group:"J"} },
   85: { t1:{rank:1,group:"B"} },
-  86: { t1:{rank:2,group:"D"}, t2:{rank:2,group:"G"} },
-  87: { t1:{rank:1,group:"J"}, t2:{rank:2,group:"H"} },
-  88: { t1:{rank:1,group:"K"} },
+  86: { t1:{rank:1,group:"J"}, t2:{rank:2,group:"H"} },
+  87: { t1:{rank:1,group:"K"} },
+  88: { t1:{rank:2,group:"D"}, t2:{rank:2,group:"G"} },
 };
 
 function computeStandings(groupCode, scores) {
