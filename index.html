@@ -23,7 +23,7 @@ const {useState, useEffect, useCallback, useRef} = React;
 
 // Versión de esta build — increméntala cada vez que subas un cambio nuevo.
 // Se usa para detectar pestañas abiertas con código viejo (ver más abajo).
-const APP_VERSION = "2026-06-24.3";
+const APP_VERSION = "2026-06-28.1";
 
 // =====================================================================
 // FIREBASE — guarda los pronósticos. Cada participante tiene su PROPIO
@@ -246,24 +246,25 @@ const GROUP_MATCHES = [
 }));
 
 const KNOCKOUT_MATCHES = [
-  // Ronda de 32 (nueva ronda 2026, 32 equipos clasificados) — fechas y emparejamientos oficiales FIFA
-  // (corregido: la primera versión tenía los cruces de grupo equivocados)
-  [73,"2026-06-28","20:00","2° Grupo A","","2° Grupo B","","Los Ángeles, CA"],
-  [74,"2026-06-29","21:30","1° Grupo E","","Mejor 3° (A/B/C/D/F)","","Foxborough, MA"],
-  [75,"2026-06-30","02:00","1° Grupo F","","2° Grupo C","","Guadalupe, México"],
-  [76,"2026-06-29","18:00","1° Grupo C","","2° Grupo F","","Houston"],
-  [77,"2026-06-30","22:00","1° Grupo I","","Mejor 3° (C/D/F/G/H)","","East Rutherford, NJ"],
-  [78,"2026-06-30","18:00","2° Grupo E","","2° Grupo I","","Arlington, TX"],
-  [79,"2026-07-01","02:00","1° Grupo A","","Mejor 3° (C/E/F/H/I)","","Ciudad de México"],
-  [80,"2026-07-01","17:00","1° Grupo L","","Mejor 3° (E/H/I/J/K)","","Atlanta"],
-  [81,"2026-07-02","01:00","1° Grupo D","","Mejor 3° (B/E/F/I/J)","","Santa Clara, CA"],
-  [82,"2026-07-01","21:00","1° Grupo G","","Mejor 3° (A/E/H/I/J)","","Seattle"],
-  [83,"2026-07-03","00:00","2° Grupo K","","2° Grupo L","","Toronto"],
-  [84,"2026-07-02","20:00","1° Grupo H","","2° Grupo J","","Los Ángeles, CA"],
-  [85,"2026-07-03","04:00","1° Grupo B","","Mejor 3° (E/F/G/I/J)","","Vancouver"],
-  [86,"2026-07-03","23:00","1° Grupo J","","2° Grupo H","","Miami Gardens, FL"],
-  [87,"2026-07-04","02:30","1° Grupo K","","Mejor 3° (D/E/I/J/L)","","Kansas City"],
-  [88,"2026-07-03","19:00","2° Grupo D","","2° Grupo G","","Arlington, TX"],
+  // Ronda de 32 — partidos confirmados con equipos reales, fecha y hora
+  // exacta en CEST (España), verificados contra fuente con cruce de varias
+  // referencias oficiales el 28/06/2026.
+  [73,"2026-06-28","21:00","Sudáfrica","RSA","Canadá","CAN","Inglewood, CA"],
+  [74,"2026-06-29","22:30","Alemania","GER","Paraguay","PAR","Foxborough, MA"],
+  [75,"2026-06-30","03:00","Países Bajos","NED","Marruecos","MAR","Monterrey, México"],
+  [76,"2026-06-29","19:00","Brasil","BRA","Japón","JPN","Houston"],
+  [77,"2026-06-30","23:00","Francia","FRA","Suecia","SWE","East Rutherford, NJ"],
+  [78,"2026-06-30","19:00","Costa de Marfil","CIV","Noruega","NOR","Arlington, TX"],
+  [79,"2026-07-01","03:00","México","MEX","Ecuador","ECU","Ciudad de México"],
+  [80,"2026-07-01","18:00","Inglaterra","ENG","RD Congo","COD","Atlanta"],
+  [81,"2026-07-02","02:00","Estados Unidos","USA","Bosnia y Herzegovina","BIH","Santa Clara, CA"],
+  [82,"2026-07-01","22:00","Bélgica","BEL","Senegal","SEN","Seattle"],
+  [83,"2026-07-03","01:00","Portugal","POR","Croacia","CRO","Toronto"],
+  [84,"2026-07-02","21:00","España","ESP","Austria","AUT","Inglewood, CA"],
+  [85,"2026-07-03","05:00","Suiza","SUI","Argelia","ALG","Vancouver"],
+  [86,"2026-07-04","00:00","Argentina","ARG","Cabo Verde","CPV","Miami Gardens, FL"],
+  [87,"2026-07-04","03:30","Colombia","COL","Ghana","GHA","Kansas City"],
+  [88,"2026-07-03","20:00","Australia","AUS","Egipto","EGY","Arlington, TX"],
   // Octavos de Final (Round of 16) — emparejamientos pendientes del resultado de la Ronda de 32
   [89,"2026-07-04","19:00","Por definir","","Por definir","","Houston"],
   [90,"2026-07-04","23:00","Por definir","","Por definir","","Filadelfia"],
