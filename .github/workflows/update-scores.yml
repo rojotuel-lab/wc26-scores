@@ -30,3 +30,11 @@ jobs:
           git add scores.json
           git diff --staged --quiet || git commit -m "Actualizar marcadores"
           git push
+
+      - name: Install firebase-admin
+        run: npm install firebase-admin
+
+      - name: Resolve knockout team slots from completed groups
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node update-knockout-teams.js
