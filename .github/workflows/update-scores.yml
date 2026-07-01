@@ -1,15 +1,15 @@
-name: Backup Predictions
+name: Update World Cup Scores
 
 on:
   schedule:
-    - cron: '*/15 * * * *'   # cada 15 minutos, todo el día
-  workflow_dispatch: {}      # para poder ejecutarlo manualmente y probarlo
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab to test
 
 permissions:
-  contents: write
+  contents: write   # necesario para que la Action pueda hacer commit en el repo
 
 jobs:
-  backup:
+  update-scores:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -20,17 +20,20 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install firebase-admin
-        run: npm install firebase-admin
+      - name: Run score updater
+        run: node update-scores.js
 
-      - name: Run backup
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        run: node backup-predictions.js
-
-      - name: Commit backup if it changed
+      - name: Commit scores.json if it changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add backups/predictions-latest.json
-          git diff --staged --quiet || (git commit -m "Backup diario de predicciones" && git pull --rebase && git push)
+          git add scores.json
+          git diff --staged --quiet || (git commit -m "Actualizar marcadores" && git pull --rebase && git push)
+
+      - name: Install firebase-admin
+        run: npm install firebase-admin
+
+      - name: Resolve knockout team slots from completed groups
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node update-knockout-teams.js
