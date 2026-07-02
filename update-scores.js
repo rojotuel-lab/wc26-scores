@@ -1,16 +1,16 @@
 // update-scores.js
-// Fetches FIFA World Cup 2026 group-stage scores from ESPN's free, public
-// (no API key required) scoreboard endpoint, and writes a clean
-// { matchId: { s1, s2, st } } JSON file directly into this repo. GitHub
-// Pages serves it automatically as a normal static file — no external
-// storage service, no request quota to ever run out of.
+// Fetches FIFA World Cup 2026 scores from ESPN's free, public scoreboard
+// endpoint and writes a clean JSON file into this repo. GitHub Pages serves
+// it automatically as a normal static file — no external storage, no quota.
 //
-// Runs entirely free: GitHub Actions (scheduler) + ESPN (data) + GitHub Pages (hosting).
+// For knockout matches (id >= 73), also stores rs1/rs2 = regulation-time
+// score only (periods 1+2, ignoring extra time). The React app uses rs1/rs2
+// for point calculations in those matches, while showing the full score
+// (s1/s2) in the Partidos tab. This implements the pool rule that only
+// goals scored in the first 90 minutes count from the Round of 32 onwards.
 
 const fs = require("fs");
 
-// Our internal group-stage matches: id + each team's FIFA-style 3-letter code,
-// exactly matching the codes used inside the Porra Mundial app.
 const MATCHES = [
   {id:1,c1:"MEX",c2:"RSA"},{id:2,c1:"KOR",c2:"CZE"},{id:3,c1:"CAN",c2:"BIH"},
   {id:4,c1:"USA",c2:"PAR"},{id:5,c1:"QAT",c2:"SUI"},{id:6,c1:"BRA",c2:"MAR"},
@@ -36,7 +36,7 @@ const MATCHES = [
   {id:64,c1:"CPV",c2:"KSA"},{id:65,c1:"NZL",c2:"BEL"},{id:66,c1:"EGY",c2:"IRN"},
   {id:67,c1:"PAN",c2:"ENG"},{id:68,c1:"CRO",c2:"GHA"},{id:69,c1:"COL",c2:"POR"},
   {id:70,c1:"COD",c2:"UZB"},{id:71,c1:"JOR",c2:"ARG"},{id:72,c1:"ALG",c2:"AUT"},
-  // Ronda de 32 — equipos reales confirmados (ver SETUP.md)
+  // Ronda de 32 — equipos reales confirmados
   {id:73,c1:"RSA",c2:"CAN"},{id:74,c1:"GER",c2:"PAR"},{id:75,c1:"NED",c2:"MAR"},
   {id:76,c1:"BRA",c2:"JPN"},{id:77,c1:"FRA",c2:"SWE"},{id:78,c1:"CIV",c2:"NOR"},
   {id:79,c1:"MEX",c2:"ECU"},{id:80,c1:"ENG",c2:"COD"},{id:81,c1:"USA",c2:"BIH"},
@@ -48,16 +48,18 @@ const MATCHES = [
   {id:91,c1:"BRA",c2:"NOR"},{id:92,c1:"MEX",c2:"ENG"},
 ];
 
-// ESPN sometimes uses a different 3-letter abbreviation than the one we use
-// internally. Add any alternates here if a match silently fails to update.
-// All 48 team codes now match ESPN/FIFA's official broadcast abbreviations
-// directly (verified against FIFA.com and ESPN's own listings), so no
-// aliasing should be needed. Kept empty but in place as a safety net in
-// case ESPN ever uses a different code for a specific match.
 const ESPN_ALIAS = {};
-
 function espnCodes(ourCode) {
   return [ourCode, ...(ESPN_ALIAS[ourCode] || [])];
+}
+
+// ESPN period numbers for soccer:
+// 1 = first half, 2 = second half, 3 = first ET half, 4 = second ET half
+// We only want periods 1+2 for regulation-time score.
+function getLinescoreByPeriod(competitor, periodNumber) {
+  const ls = competitor.linescores || [];
+  const period = ls.find(l => l.period && l.period.number === periodNumber);
+  return period ? (parseInt(period.value, 10) || 0) : null;
 }
 
 async function main() {
@@ -71,7 +73,6 @@ async function main() {
   const events = data.events || [];
   console.log(`ESPN returned ${events.length} events.`);
 
-  // Index ESPN events by sorted pair of team abbreviations.
   const espnByPair = {};
   for (const ev of events) {
     const comp = ev.competitions && ev.competitions[0];
@@ -94,6 +95,8 @@ async function main() {
       homeScore: parseInt(home.score, 10),
       awayScore: parseInt(away.score, 10),
       st,
+      homeComp: home,
+      awayComp: away,
     };
   }
 
@@ -112,22 +115,38 @@ async function main() {
     }
     if (!found) continue;
     if (isNaN(found.homeScore) || isNaN(found.awayScore)) continue;
-    if (found.st === "Programado" && found.homeScore === 0 && found.awayScore === 0) continue; // not started yet
+    if (found.st === "Programado" && found.homeScore === 0 && found.awayScore === 0) continue;
 
     const c1IsHome = codes1.includes(found.homeAbbr);
     const s1 = c1IsHome ? found.homeScore : found.awayScore;
     const s2 = c1IsHome ? found.awayScore : found.homeScore;
-    result[m.id] = { s1, s2, st: found.st };
+
+    const entry = { s1, s2, st: found.st };
+
+    // For knockout matches (id >= 73): also store regulation-time score.
+    // rs1/rs2 = sum of periods 1 and 2 only — extra time and penalties excluded.
+    // This implements the pool rule: only goals in the first 90 minutes count.
+    if (m.id >= 73) {
+      const homeC = c1IsHome ? found.homeComp : found.awayComp;
+      const awayC = c1IsHome ? found.awayComp : found.homeComp;
+      const h1 = getLinescoreByPeriod(homeC, 1);
+      const h2 = getLinescoreByPeriod(homeC, 2);
+      const a1 = getLinescoreByPeriod(awayC, 1);
+      const a2 = getLinescoreByPeriod(awayC, 2);
+      // Only store rs1/rs2 if ESPN actually returned period data.
+      // If linescores are missing (e.g. match not yet started), omit them
+      // so the app gracefully falls back to s1/s2.
+      if (h1 !== null && h2 !== null && a1 !== null && a2 !== null) {
+        entry.rs1 = h1 + h2;
+        entry.rs2 = a1 + a2;
+      }
+    }
+
+    result[m.id] = entry;
     matched++;
   }
 
-  console.log(`Matched ${matched} of ${MATCHES.length} group matches with live/final data.`);
-  console.log(JSON.stringify(result));
-
-  // Escribimos el resultado directamente como un archivo en el propio repo
-  // (en vez de mandarlo a JSONBin). GitHub Pages lo sirve automáticamente
-  // como un archivo estático más, sin límite de peticiones tipo "se agotan
-  // para siempre" — a diferencia del plan gratuito de JSONBin.
+  console.log(`Matched ${matched} of ${MATCHES.length} matches with live/final data.`);
   fs.writeFileSync("scores.json", JSON.stringify(result));
   console.log("✅ scores.json escrito correctamente.");
 }
