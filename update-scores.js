@@ -1,13 +1,11 @@
 // update-scores.js
 // Fetches FIFA World Cup 2026 scores from ESPN's free, public scoreboard
-// endpoint and writes a clean JSON file into this repo. GitHub Pages serves
-// it automatically as a normal static file — no external storage, no quota.
+// endpoint and writes scores.json to this repo.
 //
-// For knockout matches (id >= 73), also stores rs1/rs2 = regulation-time
-// score only (periods 1+2, ignoring extra time). The React app uses rs1/rs2
-// for point calculations in those matches, while showing the full score
-// (s1/s2) in the Partidos tab. This implements the pool rule that only
-// goals scored in the first 90 minutes count from the Round of 32 onwards.
+// For knockout matches (id >= 73) that went to extra time: ESPN includes
+// ET goals in the total score. We maintain reg_scores.json manually to
+// store the regulation-time score (rs1/rs2) for those matches. The React
+// app uses rs1/rs2 for point calculations while displaying the full score.
 
 const fs = require("fs");
 
@@ -36,7 +34,7 @@ const MATCHES = [
   {id:64,c1:"CPV",c2:"KSA"},{id:65,c1:"NZL",c2:"BEL"},{id:66,c1:"EGY",c2:"IRN"},
   {id:67,c1:"PAN",c2:"ENG"},{id:68,c1:"CRO",c2:"GHA"},{id:69,c1:"COL",c2:"POR"},
   {id:70,c1:"COD",c2:"UZB"},{id:71,c1:"JOR",c2:"ARG"},{id:72,c1:"ALG",c2:"AUT"},
-  // Ronda de 32 — equipos reales confirmados
+  // Ronda de 32
   {id:73,c1:"RSA",c2:"CAN"},{id:74,c1:"GER",c2:"PAR"},{id:75,c1:"NED",c2:"MAR"},
   {id:76,c1:"BRA",c2:"JPN"},{id:77,c1:"FRA",c2:"SWE"},{id:78,c1:"CIV",c2:"NOR"},
   {id:79,c1:"MEX",c2:"ECU"},{id:80,c1:"ENG",c2:"COD"},{id:81,c1:"USA",c2:"BIH"},
@@ -53,51 +51,42 @@ function espnCodes(ourCode) {
   return [ourCode, ...(ESPN_ALIAS[ourCode] || [])];
 }
 
-// ESPN period numbers for soccer:
-// 1 = first half, 2 = second half, 3 = first ET half, 4 = second ET half
-// We only want periods 1+2 for regulation-time score.
-function getLinescoreByPeriod(competitor, periodNumber) {
-  const ls = competitor.linescores || [];
-  const period = ls.find(l => l.period && l.period.number === periodNumber);
-  return period ? (parseInt(period.value, 10) || 0) : null;
-}
-
 async function main() {
+  // Load manual regulation-time overrides for matches that went to ET.
+  // Only needed when ESPN reports the full score (including ET goals).
+  let regScores = {};
+  try {
+    regScores = JSON.parse(fs.readFileSync("reg_scores.json", "utf-8"));
+    console.log(`Loaded reg_scores.json with ${Object.keys(regScores).length} override(s).`);
+  } catch(e) {
+    console.log("No reg_scores.json found — no regulation-time overrides.");
+  }
+
   const url = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=300&dates=20260611-20260719";
   const res = await fetch(url);
-  if (!res.ok) {
-    console.error("ESPN fetch failed:", res.status);
-    process.exit(1);
-  }
+  if (!res.ok) { console.error("ESPN fetch failed:", res.status); process.exit(1); }
   const data = await res.json();
   const events = data.events || [];
   console.log(`ESPN returned ${events.length} events.`);
 
   const espnByPair = {};
   for (const ev of events) {
-    const comp = ev.competitions && ev.competitions[0];
+    const comp = ev.competitions?.[0];
     if (!comp) continue;
     const competitors = comp.competitors || [];
     if (competitors.length !== 2) continue;
     const home = competitors.find(c => c.homeAway === "home");
     const away = competitors.find(c => c.homeAway === "away");
     if (!home || !away) continue;
-    const homeAbbr = home.team && home.team.abbreviation;
-    const awayAbbr = away.team && away.team.abbreviation;
+    const homeAbbr = home.team?.abbreviation;
+    const awayAbbr = away.team?.abbreviation;
     if (!homeAbbr || !awayAbbr) continue;
-    const statusType = (comp.status && comp.status.type) || {};
+    const statusType = comp.status?.type || {};
     let st = "Programado";
     if (statusType.completed) st = "Finalizado";
     else if (statusType.state === "in") st = "En vivo";
     const key = [homeAbbr, awayAbbr].sort().join("-");
-    espnByPair[key] = {
-      homeAbbr, awayAbbr,
-      homeScore: parseInt(home.score, 10),
-      awayScore: parseInt(away.score, 10),
-      st,
-      homeComp: home,
-      awayComp: away,
-    };
+    espnByPair[key] = { homeAbbr, awayAbbr, homeScore: parseInt(home.score,10), awayScore: parseInt(away.score,10), st };
   }
 
   const result = {};
@@ -107,11 +96,9 @@ async function main() {
     const codes2 = espnCodes(m.c2);
     let found = null;
     outer:
-    for (const a of codes1) {
-      for (const b of codes2) {
-        const key = [a, b].sort().join("-");
-        if (espnByPair[key]) { found = espnByPair[key]; break outer; }
-      }
+    for (const a of codes1) for (const b of codes2) {
+      const key = [a,b].sort().join("-");
+      if (espnByPair[key]) { found = espnByPair[key]; break outer; }
     }
     if (!found) continue;
     if (isNaN(found.homeScore) || isNaN(found.awayScore)) continue;
@@ -120,38 +107,23 @@ async function main() {
     const c1IsHome = codes1.includes(found.homeAbbr);
     const s1 = c1IsHome ? found.homeScore : found.awayScore;
     const s2 = c1IsHome ? found.awayScore : found.homeScore;
-
     const entry = { s1, s2, st: found.st };
 
-    // For knockout matches (id >= 73): also store regulation-time score.
-    // rs1/rs2 = sum of periods 1 and 2 only — extra time and penalties excluded.
-    // This implements the pool rule: only goals in the first 90 minutes count.
-    if (m.id >= 73) {
-      const homeC = c1IsHome ? found.homeComp : found.awayComp;
-      const awayC = c1IsHome ? found.awayComp : found.homeComp;
-      const h1 = getLinescoreByPeriod(homeC, 1);
-      const h2 = getLinescoreByPeriod(homeC, 2);
-      const a1 = getLinescoreByPeriod(awayC, 1);
-      const a2 = getLinescoreByPeriod(awayC, 2);
-      // Only store rs1/rs2 if ESPN actually returned period data.
-      // If linescores are missing (e.g. match not yet started), omit them
-      // so the app gracefully falls back to s1/s2.
-      if (h1 !== null && h2 !== null && a1 !== null && a2 !== null) {
-        entry.rs1 = h1 + h2;
-        entry.rs2 = a1 + a2;
-      }
+    // For knockout matches: apply manual regulation-time override if one exists.
+    const reg = regScores[String(m.id)];
+    if (reg) {
+      entry.rs1 = reg.rs1;
+      entry.rs2 = reg.rs2;
+      console.log(`Match ${m.id}: full=${s1}-${s2}, regulation=${reg.rs1}-${reg.rs2}`);
     }
 
     result[m.id] = entry;
     matched++;
   }
 
-  console.log(`Matched ${matched} of ${MATCHES.length} matches with live/final data.`);
+  console.log(`Matched ${matched} of ${MATCHES.length} matches.`);
   fs.writeFileSync("scores.json", JSON.stringify(result));
-  console.log("✅ scores.json escrito correctamente.");
+  console.log("✅ scores.json written.");
 }
 
-main().catch(err => {
-  console.error("Script failed:", err);
-  process.exit(1);
-});
+main().catch(err => { console.error("Script failed:", err); process.exit(1); });
