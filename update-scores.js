@@ -43,6 +43,9 @@ const MATCHES = [
   {id:82,c1:"BEL",c2:"SEN"},{id:83,c1:"POR",c2:"CRO"},{id:84,c1:"ESP",c2:"AUT"},
   {id:85,c1:"SUI",c2:"ALG"},{id:86,c1:"ARG",c2:"CPV"},{id:87,c1:"COL",c2:"GHA"},
   {id:88,c1:"AUS",c2:"EGY"},
+  // Octavos de Final
+  {id:89,c1:"PAR",c2:"FRA"},{id:90,c1:"CAN",c2:"MAR"},
+  {id:91,c1:"BRA",c2:"NOR"},{id:92,c1:"MEX",c2:"ENG"},
 ];
 
 // ESPN sometimes uses a different 3-letter abbreviation than the one we use
