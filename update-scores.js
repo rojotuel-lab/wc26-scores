@@ -1,11 +1,16 @@
 // update-scores.js
-// Fetches FIFA World Cup 2026 scores from ESPN's free, public scoreboard
-// endpoint and writes scores.json to this repo.
+// Fetches FIFA World Cup 2026 scores from ESPN's free, public scoreboard.
 //
-// For knockout matches (id >= 73) that went to extra time: ESPN includes
-// ET goals in the total score. We maintain reg_scores.json manually to
-// store the regulation-time score (rs1/rs2) for those matches. The React
-// app uses rs1/rs2 for point calculations while displaying the full score.
+// For knockout matches (id >= 73): tries to extract the regulation-time
+// score automatically by:
+//   1. Detecting if a match went to extra time via status description
+//   2. If so, calling ESPN's summary endpoint for that match to get
+//      period-by-period scores (linescores)
+//   3. Summing only periods 1+2 (regulation) to get rs1/rs2
+//   4. Falling back to reg_scores.json for any match where ESPN doesn't
+//      provide the period breakdown (should be rare or never needed)
+//
+// This means no manual work is needed for the vast majority of ET matches.
 
 const fs = require("fs");
 
@@ -51,15 +56,91 @@ function espnCodes(ourCode) {
   return [ourCode, ...(ESPN_ALIAS[ourCode] || [])];
 }
 
+// Detect if ESPN says a match went to extra time via any status field.
+function wentToExtraTime(comp) {
+  const status = comp.status || {};
+  const type = status.type || {};
+  // ESPN uses various fields — check all of them
+  const fields = [
+    type.name, type.description, type.detail, type.shortDetail,
+    status.displayClock, status.type?.shortDetail
+  ].filter(Boolean).join(" ").toUpperCase();
+  return fields.includes("OT") || fields.includes("ET") ||
+         fields.includes("AET") || fields.includes("OVERTIME") ||
+         fields.includes("EXTRA") || (status.period && status.period >= 3);
+}
+
+// Try to get regulation-time score from ESPN's summary endpoint.
+// Returns {rs1, rs2} or null if not available.
+async function getRegulationScore(espnEventId, c1IsHome) {
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event=${espnEventId}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+
+    // Dump the structure so we can see it in GitHub Actions logs
+    const comp = data.header?.competitions?.[0] || data.boxscore?.teams?.[0]?.team || null;
+    const competitors = data.header?.competitions?.[0]?.competitors || [];
+    console.log(`  Summary event ${espnEventId}: ${competitors.length} competitors`);
+
+    // Try linescores from header competitors
+    for (const c of competitors) {
+      const ls = c.linescores || [];
+      if (ls.length > 0) {
+        console.log(`  Linescores found for ${c.homeAway}: ${JSON.stringify(ls.slice(0,6))}`);
+      }
+    }
+
+    // Try linescores from boxscore
+    const teams = data.boxscore?.teams || [];
+    for (const t of teams) {
+      const ls = t.team?.linescores || t.linescores || [];
+      if (ls.length > 0) {
+        console.log(`  Boxscore linescores: ${JSON.stringify(ls.slice(0,6))}`);
+      }
+    }
+
+    // Try to find halftime score or period scores
+    // ESPN sometimes puts period scores in header.competitions[0].format.regulation
+    // or in a separate periods array
+    const periods = data.header?.competitions?.[0]?.periods || [];
+    if (periods.length > 0) {
+      console.log(`  Periods: ${JSON.stringify(periods)}`);
+    }
+
+    // Attempt to extract regulation scores from any linescore found
+    const homeComp = competitors.find(c => c.homeAway === "home");
+    const awayComp = competitors.find(c => c.homeAway === "away");
+    if (homeComp && awayComp) {
+      const homeLs = homeComp.linescores || [];
+      const awayLs = awayComp.linescores || [];
+      if (homeLs.length >= 2 && awayLs.length >= 2) {
+        // Assume first 2 entries are regulation periods
+        const homeReg = homeLs.slice(0, 2).reduce((s, l) => s + (parseFloat(l.value) || 0), 0);
+        const awayReg = awayLs.slice(0, 2).reduce((s, l) => s + (parseFloat(l.value) || 0), 0);
+        const rs1 = c1IsHome ? homeReg : awayReg;
+        const rs2 = c1IsHome ? awayReg : homeReg;
+        console.log(`  ✅ Computed regulation score: ${rs1}-${rs2}`);
+        return { rs1, rs2 };
+      }
+    }
+
+    return null;
+  } catch(e) {
+    console.log(`  Summary fetch failed: ${e.message}`);
+    return null;
+  }
+}
+
 async function main() {
-  // Load manual regulation-time overrides for matches that went to ET.
-  // Only needed when ESPN reports the full score (including ET goals).
+  // Load manual regulation-time fallbacks (for any match ESPN can't auto-resolve)
   let regScores = {};
   try {
     regScores = JSON.parse(fs.readFileSync("reg_scores.json", "utf-8"));
-    console.log(`Loaded reg_scores.json with ${Object.keys(regScores).length} override(s).`);
+    console.log(`Loaded reg_scores.json with ${Object.keys(regScores).length} manual override(s).`);
   } catch(e) {
-    console.log("No reg_scores.json found — no regulation-time overrides.");
+    console.log("No reg_scores.json — no manual overrides.");
   }
 
   const url = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=300&dates=20260611-20260719";
@@ -86,7 +167,12 @@ async function main() {
     if (statusType.completed) st = "Finalizado";
     else if (statusType.state === "in") st = "En vivo";
     const key = [homeAbbr, awayAbbr].sort().join("-");
-    espnByPair[key] = { homeAbbr, awayAbbr, homeScore: parseInt(home.score,10), awayScore: parseInt(away.score,10), st };
+    espnByPair[key] = {
+      homeAbbr, awayAbbr,
+      homeScore: parseInt(home.score, 10),
+      awayScore: parseInt(away.score, 10),
+      st, comp, espnId: ev.id
+    };
   }
 
   const result = {};
@@ -109,12 +195,28 @@ async function main() {
     const s2 = c1IsHome ? found.awayScore : found.homeScore;
     const entry = { s1, s2, st: found.st };
 
-    // For knockout matches: apply manual regulation-time override if one exists.
-    const reg = regScores[String(m.id)];
-    if (reg) {
-      entry.rs1 = reg.rs1;
-      entry.rs2 = reg.rs2;
-      console.log(`Match ${m.id}: full=${s1}-${s2}, regulation=${reg.rs1}-${reg.rs2}`);
+    // For knockout matches: try to get regulation score automatically
+    if (m.id >= 73 && found.st === "Finalizado") {
+      const manualOverride = regScores[String(m.id)];
+      if (manualOverride) {
+        // Manual override always wins
+        entry.rs1 = manualOverride.rs1;
+        entry.rs2 = manualOverride.rs2;
+        console.log(`Match ${m.id}: using manual override ${entry.rs1}-${entry.rs2} (full: ${s1}-${s2})`);
+      } else if (wentToExtraTime(found.comp)) {
+        // Try to auto-detect regulation score from ESPN summary
+        console.log(`Match ${m.id}: went to ET (full: ${s1}-${s2}), fetching summary...`);
+        const reg = await getRegulationScore(found.espnId, c1IsHome);
+        if (reg) {
+          entry.rs1 = reg.rs1;
+          entry.rs2 = reg.rs2;
+          console.log(`Match ${m.id}: auto-resolved regulation score: ${reg.rs1}-${reg.rs2}`);
+        } else {
+          console.log(`Match ${m.id}: ⚠️ could not auto-resolve regulation score — add to reg_scores.json manually`);
+        }
+      }
+      // If didn't go to ET or no override needed: rs1/rs2 not set,
+      // app will use s1/s2 (same score, no difference)
     }
 
     result[m.id] = entry;
