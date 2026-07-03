@@ -1,17 +1,3 @@
-// update-scores.js
-// Fetches FIFA World Cup 2026 scores from ESPN's free, public scoreboard.
-//
-// For knockout matches (id >= 73): tries to extract the regulation-time
-// score automatically by:
-//   1. Detecting if a match went to extra time via status description
-//   2. If so, calling ESPN's summary endpoint for that match to get
-//      period-by-period scores (linescores)
-//   3. Summing only periods 1+2 (regulation) to get rs1/rs2
-//   4. Falling back to reg_scores.json for any match where ESPN doesn't
-//      provide the period breakdown (should be rare or never needed)
-//
-// This means no manual work is needed for the vast majority of ET matches.
-
 const fs = require("fs");
 
 const MATCHES = [
@@ -39,193 +25,88 @@ const MATCHES = [
   {id:64,c1:"CPV",c2:"KSA"},{id:65,c1:"NZL",c2:"BEL"},{id:66,c1:"EGY",c2:"IRN"},
   {id:67,c1:"PAN",c2:"ENG"},{id:68,c1:"CRO",c2:"GHA"},{id:69,c1:"COL",c2:"POR"},
   {id:70,c1:"COD",c2:"UZB"},{id:71,c1:"JOR",c2:"ARG"},{id:72,c1:"ALG",c2:"AUT"},
-  // Ronda de 32
   {id:73,c1:"RSA",c2:"CAN"},{id:74,c1:"GER",c2:"PAR"},{id:75,c1:"NED",c2:"MAR"},
   {id:76,c1:"BRA",c2:"JPN"},{id:77,c1:"FRA",c2:"SWE"},{id:78,c1:"CIV",c2:"NOR"},
   {id:79,c1:"MEX",c2:"ECU"},{id:80,c1:"ENG",c2:"COD"},{id:81,c1:"USA",c2:"BIH"},
   {id:82,c1:"BEL",c2:"SEN"},{id:83,c1:"POR",c2:"CRO"},{id:84,c1:"ESP",c2:"AUT"},
   {id:85,c1:"SUI",c2:"ALG"},{id:86,c1:"ARG",c2:"CPV"},{id:87,c1:"COL",c2:"GHA"},
   {id:88,c1:"AUS",c2:"EGY"},
-  // Octavos de Final
   {id:89,c1:"PAR",c2:"FRA"},{id:90,c1:"CAN",c2:"MAR"},
   {id:91,c1:"BRA",c2:"NOR"},{id:92,c1:"MEX",c2:"ENG"},
 ];
 
 const ESPN_ALIAS = {};
-function espnCodes(ourCode) {
-  return [ourCode, ...(ESPN_ALIAS[ourCode] || [])];
-}
+function espnCodes(c){ return [c,...(ESPN_ALIAS[c]||[])]; }
 
-// Detect if ESPN says a match went to extra time via any status field.
-function wentToExtraTime(comp) {
-  const status = comp.status || {};
-  const type = status.type || {};
-  // ESPN uses various fields — check all of them
-  const fields = [
-    type.name, type.description, type.detail, type.shortDetail,
-    status.displayClock, status.type?.shortDetail
-  ].filter(Boolean).join(" ").toUpperCase();
-  return fields.includes("OT") || fields.includes("ET") ||
-         fields.includes("AET") || fields.includes("OVERTIME") ||
-         fields.includes("EXTRA") || (status.period && status.period >= 3);
-}
+async function main(){
+  // match_overrides.json: manually set ps1/ps2 (pool score for points)
+  // and/or s1/s2/st (fix stuck ESPN scores).
+  // Format: {"82":{"ps1":2,"ps2":2}, "85":{"s1":1,"s2":0,"st":"Finalizado"}}
+  let overrides={};
+  try{
+    overrides=JSON.parse(fs.readFileSync("match_overrides.json","utf-8"));
+    console.log(`Overrides loaded:`,JSON.stringify(overrides));
+  }catch(e){ console.log("No match_overrides.json"); }
 
-// Try to get regulation-time score from ESPN's summary endpoint.
-// Returns {rs1, rs2} or null if not available.
-async function getRegulationScore(espnEventId, c1IsHome) {
-  try {
-    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event=${espnEventId}`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
+  const url="https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=300&dates=20260611-20260719";
+  const res=await fetch(url);
+  if(!res.ok){console.error("ESPN failed:",res.status);process.exit(1);}
+  const data=await res.json();
+  const events=data.events||[];
+  console.log(`ESPN: ${events.length} events`);
 
-    // Dump the structure so we can see it in GitHub Actions logs
-    const comp = data.header?.competitions?.[0] || data.boxscore?.teams?.[0]?.team || null;
-    const competitors = data.header?.competitions?.[0]?.competitors || [];
-    console.log(`  Summary event ${espnEventId}: ${competitors.length} competitors`);
+  const byPair={};
+  for(const ev of events){
+    const comp=ev.competitions?.[0];
+    if(!comp) continue;
+    const home=comp.competitors?.find(c=>c.homeAway==="home");
+    const away=comp.competitors?.find(c=>c.homeAway==="away");
+    if(!home||!away) continue;
+    const ha=home.team?.abbreviation,aa=away.team?.abbreviation;
+    if(!ha||!aa) continue;
+    const t=comp.status?.type||{};
+    let st="Programado";
+    if(t.completed) st="Finalizado";
+    else if(t.state==="in") st="En vivo";
+    byPair[[ha,aa].sort().join("-")]={ha,aa,hs:parseInt(home.score,10),as:parseInt(away.score,10),st};
+  }
 
-    // Try linescores from header competitors
-    for (const c of competitors) {
-      const ls = c.linescores || [];
-      if (ls.length > 0) {
-        console.log(`  Linescores found for ${c.homeAway}: ${JSON.stringify(ls.slice(0,6))}`);
+  const result={};
+  let matched=0;
+  for(const m of MATCHES){
+    const c1s=espnCodes(m.c1),c2s=espnCodes(m.c2);
+    let found=null;
+    outer: for(const a of c1s) for(const b of c2s){
+      const f=byPair[[a,b].sort().join("-")];
+      if(f){found=f;break outer;}
+    }
+
+    let entry=null;
+    if(found&&!isNaN(found.hs)&&!isNaN(found.as)){
+      if(!(found.st==="Programado"&&found.hs===0&&found.as===0)){
+        const c1Home=c1s.includes(found.ha);
+        entry={s1:c1Home?found.hs:found.as,s2:c1Home?found.as:found.hs,st:found.st};
+        matched++;
       }
     }
 
-    // Try linescores from boxscore
-    const teams = data.boxscore?.teams || [];
-    for (const t of teams) {
-      const ls = t.team?.linescores || t.linescores || [];
-      if (ls.length > 0) {
-        console.log(`  Boxscore linescores: ${JSON.stringify(ls.slice(0,6))}`);
-      }
+    const ov=overrides[String(m.id)];
+    if(ov){
+      if(!entry){entry={s1:0,s2:0,st:"Programado"};matched++;}
+      if(ov.s1!=null) entry.s1=ov.s1;
+      if(ov.s2!=null) entry.s2=ov.s2;
+      if(ov.st!=null) entry.st=ov.st;
+      // ps1/ps2 = pool score for point calculation (when different from s1/s2)
+      if(ov.ps1!=null) entry.ps1=ov.ps1;
+      if(ov.ps2!=null) entry.ps2=ov.ps2;
+      console.log(`Match ${m.id} override:`,JSON.stringify(entry));
     }
 
-    // Try to find halftime score or period scores
-    // ESPN sometimes puts period scores in header.competitions[0].format.regulation
-    // or in a separate periods array
-    const periods = data.header?.competitions?.[0]?.periods || [];
-    if (periods.length > 0) {
-      console.log(`  Periods: ${JSON.stringify(periods)}`);
-    }
-
-    // Attempt to extract regulation scores from any linescore found
-    const homeComp = competitors.find(c => c.homeAway === "home");
-    const awayComp = competitors.find(c => c.homeAway === "away");
-    if (homeComp && awayComp) {
-      const homeLs = homeComp.linescores || [];
-      const awayLs = awayComp.linescores || [];
-      if (homeLs.length >= 2 && awayLs.length >= 2) {
-        // Assume first 2 entries are regulation periods
-        const homeReg = homeLs.slice(0, 2).reduce((s, l) => s + (parseFloat(l.value) || 0), 0);
-        const awayReg = awayLs.slice(0, 2).reduce((s, l) => s + (parseFloat(l.value) || 0), 0);
-        const rs1 = c1IsHome ? homeReg : awayReg;
-        const rs2 = c1IsHome ? awayReg : homeReg;
-        console.log(`  ✅ Computed regulation score: ${rs1}-${rs2}`);
-        return { rs1, rs2 };
-      }
-    }
-
-    return null;
-  } catch(e) {
-    console.log(`  Summary fetch failed: ${e.message}`);
-    return null;
-  }
-}
-
-async function main() {
-  // Load manual regulation-time fallbacks (for any match ESPN can't auto-resolve)
-  let regScores = {};
-  try {
-    regScores = JSON.parse(fs.readFileSync("reg_scores.json", "utf-8"));
-    console.log(`Loaded reg_scores.json with ${Object.keys(regScores).length} manual override(s).`);
-  } catch(e) {
-    console.log("No reg_scores.json — no manual overrides.");
+    if(entry) result[m.id]=entry;
   }
 
-  const url = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=300&dates=20260611-20260719";
-  const res = await fetch(url);
-  if (!res.ok) { console.error("ESPN fetch failed:", res.status); process.exit(1); }
-  const data = await res.json();
-  const events = data.events || [];
-  console.log(`ESPN returned ${events.length} events.`);
-
-  const espnByPair = {};
-  for (const ev of events) {
-    const comp = ev.competitions?.[0];
-    if (!comp) continue;
-    const competitors = comp.competitors || [];
-    if (competitors.length !== 2) continue;
-    const home = competitors.find(c => c.homeAway === "home");
-    const away = competitors.find(c => c.homeAway === "away");
-    if (!home || !away) continue;
-    const homeAbbr = home.team?.abbreviation;
-    const awayAbbr = away.team?.abbreviation;
-    if (!homeAbbr || !awayAbbr) continue;
-    const statusType = comp.status?.type || {};
-    let st = "Programado";
-    if (statusType.completed) st = "Finalizado";
-    else if (statusType.state === "in") st = "En vivo";
-    const key = [homeAbbr, awayAbbr].sort().join("-");
-    espnByPair[key] = {
-      homeAbbr, awayAbbr,
-      homeScore: parseInt(home.score, 10),
-      awayScore: parseInt(away.score, 10),
-      st, comp, espnId: ev.id
-    };
-  }
-
-  const result = {};
-  let matched = 0;
-  for (const m of MATCHES) {
-    const codes1 = espnCodes(m.c1);
-    const codes2 = espnCodes(m.c2);
-    let found = null;
-    outer:
-    for (const a of codes1) for (const b of codes2) {
-      const key = [a,b].sort().join("-");
-      if (espnByPair[key]) { found = espnByPair[key]; break outer; }
-    }
-    if (!found) continue;
-    if (isNaN(found.homeScore) || isNaN(found.awayScore)) continue;
-    if (found.st === "Programado" && found.homeScore === 0 && found.awayScore === 0) continue;
-
-    const c1IsHome = codes1.includes(found.homeAbbr);
-    const s1 = c1IsHome ? found.homeScore : found.awayScore;
-    const s2 = c1IsHome ? found.awayScore : found.homeScore;
-    const entry = { s1, s2, st: found.st };
-
-    // For knockout matches: try to get regulation score automatically
-    if (m.id >= 73 && found.st === "Finalizado") {
-      const manualOverride = regScores[String(m.id)];
-      if (manualOverride) {
-        // Manual override always wins
-        entry.rs1 = manualOverride.rs1;
-        entry.rs2 = manualOverride.rs2;
-        console.log(`Match ${m.id}: using manual override ${entry.rs1}-${entry.rs2} (full: ${s1}-${s2})`);
-      } else if (wentToExtraTime(found.comp)) {
-        // Try to auto-detect regulation score from ESPN summary
-        console.log(`Match ${m.id}: went to ET (full: ${s1}-${s2}), fetching summary...`);
-        const reg = await getRegulationScore(found.espnId, c1IsHome);
-        if (reg) {
-          entry.rs1 = reg.rs1;
-          entry.rs2 = reg.rs2;
-          console.log(`Match ${m.id}: auto-resolved regulation score: ${reg.rs1}-${reg.rs2}`);
-        } else {
-          console.log(`Match ${m.id}: ⚠️ could not auto-resolve regulation score — add to reg_scores.json manually`);
-        }
-      }
-      // If didn't go to ET or no override needed: rs1/rs2 not set,
-      // app will use s1/s2 (same score, no difference)
-    }
-
-    result[m.id] = entry;
-    matched++;
-  }
-
-  console.log(`Matched ${matched} of ${MATCHES.length} matches.`);
-  fs.writeFileSync("scores.json", JSON.stringify(result));
+  console.log(`Total: ${Object.keys(result).length} matches`);
+  fs.writeFileSync("scores.json",JSON.stringify(result));
   console.log("✅ scores.json written.");
 }
-
-main().catch(err => { console.error("Script failed:", err); process.exit(1); });
+main().catch(err=>{console.error(err);process.exit(1);});
