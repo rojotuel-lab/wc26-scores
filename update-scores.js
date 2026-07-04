@@ -33,6 +33,8 @@ const MATCHES = [
   {id:88,c1:"AUS",c2:"EGY"},
   {id:89,c1:"PAR",c2:"FRA"},{id:90,c1:"CAN",c2:"MAR"},
   {id:91,c1:"BRA",c2:"NOR"},{id:92,c1:"MEX",c2:"ENG"},
+  {id:93,c1:"POR",c2:"ESP"},{id:94,c1:"USA",c2:"BEL"},
+  {id:95,c1:"ARG",c2:"EGY"},{id:96,c1:"SUI",c2:"COL"},
 ];
 
 const ESPN_ALIAS = {};
