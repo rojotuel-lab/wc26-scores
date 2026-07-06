@@ -41,14 +41,13 @@ const ESPN_ALIAS = {};
 function espnCodes(c){ return [c,...(ESPN_ALIAS[c]||[])]; }
 
 async function main(){
-  // match_overrides.json: manually set ps1/ps2 (pool score for points)
-  // and/or s1/s2/st (fix stuck ESPN scores).
-  // Format: {"82":{"ps1":2,"ps2":2}, "85":{"s1":1,"s2":0,"st":"Finalizado"}}
+  // match_overrides.json — optional. Use admin_pool_scores.html to generate it.
+  // Supports: ps1/ps2 (pool score for points) and s1/s2/st (fix stuck ESPN data).
   let overrides={};
   try{
     overrides=JSON.parse(fs.readFileSync("match_overrides.json","utf-8"));
-    console.log(`Overrides loaded:`,JSON.stringify(overrides));
-  }catch(e){ console.log("No match_overrides.json"); }
+    console.log(`Overrides:`,JSON.stringify(overrides));
+  }catch(e){ console.log("No match_overrides.json — ESPN only."); }
 
   const url="https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=300&dates=20260611-20260719";
   const res=await fetch(url);
@@ -82,7 +81,6 @@ async function main(){
       const f=byPair[[a,b].sort().join("-")];
       if(f){found=f;break outer;}
     }
-
     let entry=null;
     if(found&&!isNaN(found.hs)&&!isNaN(found.as)){
       if(!(found.st==="Programado"&&found.hs===0&&found.as===0)){
@@ -91,23 +89,20 @@ async function main(){
         matched++;
       }
     }
-
     const ov=overrides[String(m.id)];
     if(ov){
       if(!entry){entry={s1:0,s2:0,st:"Programado"};matched++;}
       if(ov.s1!=null) entry.s1=ov.s1;
       if(ov.s2!=null) entry.s2=ov.s2;
       if(ov.st!=null) entry.st=ov.st;
-      // ps1/ps2 = pool score for point calculation (when different from s1/s2)
       if(ov.ps1!=null) entry.ps1=ov.ps1;
       if(ov.ps2!=null) entry.ps2=ov.ps2;
-      console.log(`Match ${m.id} override:`,JSON.stringify(entry));
+      console.log(`Match ${m.id} override →`,JSON.stringify(entry));
     }
-
     if(entry) result[m.id]=entry;
   }
 
-  console.log(`Total: ${Object.keys(result).length} matches`);
+  console.log(`Matched ${matched}/${MATCHES.length}`);
   fs.writeFileSync("scores.json",JSON.stringify(result));
   console.log("✅ scores.json written.");
 }
