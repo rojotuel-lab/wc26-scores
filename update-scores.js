@@ -35,6 +35,8 @@ const MATCHES = [
   {id:91,c1:"BRA",c2:"NOR"},{id:92,c1:"MEX",c2:"ENG"},
   {id:93,c1:"POR",c2:"ESP"},{id:94,c1:"USA",c2:"BEL"},
   {id:95,c1:"ARG",c2:"EGY"},{id:96,c1:"SUI",c2:"COL"},
+  // Cuartos de Final
+  {id:97,c1:"FRA",c2:"MAR"},{id:98,c1:"ESP",c2:"BEL"},{id:99,c1:"NOR",c2:"ENG"},
 ];
 
 const ESPN_ALIAS = {};
